@@ -1,0 +1,33 @@
+package com.windergoodlife.smsrelay.receiver
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.util.Log
+import com.windergoodlife.smsrelay.SmsRelayApp
+import com.windergoodlife.smsrelay.worker.HeartbeatWorker
+import com.windergoodlife.smsrelay.worker.PendingSmsWorker
+
+/**
+ * After reboot, flush PENDING rows. Requires the user to have completed setup once.
+ * Force-stop cannot be recovered from here.
+ */
+class BootReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent?) {
+        if (intent?.action != Intent.ACTION_BOOT_COMPLETED) return
+        Log.i("SmsRelay", "boot completed")
+        try {
+            val app = context.applicationContext
+            if (app is SmsRelayApp && app.tokenStore.isConfigured()) {
+                PendingSmsWorker.enqueue(context)
+                HeartbeatWorker.enqueuePeriodic(context)
+            } else {
+                // Process may cold-start Application; enqueue flush anyway if prefs exist later.
+                PendingSmsWorker.enqueue(context.applicationContext)
+            }
+        } catch (e: Exception) {
+            Log.w("SmsRelay", "boot enqueue fail ${e.javaClass.simpleName}")
+            PendingSmsWorker.enqueue(context.applicationContext)
+        }
+    }
+}

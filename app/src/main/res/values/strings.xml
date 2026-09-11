@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SMS Relay</string>
+    <string name="server_status">서버 상태</string>
+    <string name="sms_permission">SMS 권한</string>
+    <string name="battery_optimization">배터리 최적화</string>
+    <string name="last_sms">마지막 SMS</string>
+    <string name="last_upload">마지막 전송</string>
+    <string name="pending_count">대기중</string>
+    <string name="failed_count">실패</string>
+    <string name="auth_error_count">인증오류</string>
+    <string name="btn_ping">서버 연결 테스트</string>
+    <string name="btn_retry_pending">대기 메시지 재전송</string>
+    <string name="btn_sync_inbox">최근 SMS 동기화</string>
+    <string name="btn_battery">배터리 설정 열기</string>
+    <string name="btn_health_check">상태 점검</string>
+    <string name="btn_open_setup">초기 설정</string>
+    <string name="setup_title">중계폰 초기 설정</string>
+    <string name="setup_hint_base_url">서버 Base URL (HTTPS)</string>
+    <string name="setup_hint_device_id">Device ID (예: relay-01)</string>
+    <string name="setup_hint_token">Device Token (어드민 1회 발급값)</string>
+    <string name="setup_save">저장하고 계속</string>
+    <string name="battery_guide">회사 중계폰은 배터리 사용량을 Unrestricted(제한 없음)로 두고, 앱 강제 종료를 하지 마세요. OEM 추가 절전 기능도 꺼 두는 것이 안정적입니다.</string>
+    <string name="force_stop_note">사용자가 설정에서 강제 종료하면 Android가 방송을 막습니다. 앱을 다시 한 번 실행해야 복구됩니다.</string>
+    <string name="inbox_policy_note">READ_SMS는 회사 전용 사이드로드 단말 전제입니다. Play 스토어 배포 정책과 충돌할 수 있습니다.</string>
+</resources>
