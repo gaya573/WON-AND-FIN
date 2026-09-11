@@ -38,4 +38,24 @@ object ApiClient {
     }
 
     fun recreate(tokenStore: DeviceTokenStore): SmsApi = create(tokenStore)
+
+    /** Builds a client against a URL the operator is still typing, before anything is saved. */
+    fun createForBaseUrl(baseUrl: String): SmsApi {
+        require(baseUrl.startsWith("https://")) { "Invalid HTTPS base URL" }
+        require(baseUrl.toHttpUrlOrNull() != null) { "Invalid HTTPS base URL" }
+
+        val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
+        val client = OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .callTimeout(30, TimeUnit.SECONDS)
+            .build()
+
+        return Retrofit.Builder()
+            .baseUrl("$baseUrl/")
+            .client(client)
+            .addConverterFactory(MoshiConverterFactory.create(moshi))
+            .build()
+            .create(SmsApi::class.java)
+    }
 }

@@ -9,6 +9,8 @@ import com.windergoodlife.smsrelay.data.SmsStatus
 import com.windergoodlife.smsrelay.network.ApiClient
 import com.windergoodlife.smsrelay.network.SmsApi
 import com.windergoodlife.smsrelay.network.dto.HeartbeatRequest
+import com.windergoodlife.smsrelay.network.dto.RelayLoginRequest
+import com.windergoodlife.smsrelay.network.dto.RelayLoginResponse
 import com.windergoodlife.smsrelay.network.dto.SmsIngestRequest
 import com.windergoodlife.smsrelay.security.DeviceTokenStore
 import com.windergoodlife.smsrelay.util.SafeLog
@@ -26,6 +28,24 @@ class SmsRepository(
 ) {
     fun refreshApi() {
         api = ApiClient.recreate(tokenStore)
+    }
+
+    /**
+     * Asks the server whether the relay password is right, against the base URL the operator just
+     * typed rather than the stored one, so nothing is persisted before the answer comes back.
+     */
+    suspend fun verifyRelayPassword(
+        baseUrl: String,
+        deviceId: String,
+        password: String
+    ): RelayLoginResponse {
+        val probe = ApiClient.createForBaseUrl(baseUrl)
+        val response = probe.login(RelayLoginRequest(deviceId, deviceId, password))
+        if (!response.isSuccessful) {
+            Log.i(TAG, "relay login rejected status=${response.code()}")
+            throw RelayLoginException(response.code())
+        }
+        return response.body() ?: throw RelayLoginException(response.code())
     }
 
     /**

@@ -2,6 +2,8 @@ package com.windergoodlife.smsrelay.network
 
 import com.windergoodlife.smsrelay.network.dto.HeartbeatRequest
 import com.windergoodlife.smsrelay.network.dto.PingResponse
+import com.windergoodlife.smsrelay.network.dto.RelayLoginRequest
+import com.windergoodlife.smsrelay.network.dto.RelayLoginResponse
 import com.windergoodlife.smsrelay.network.dto.SmsAckResponse
 import com.windergoodlife.smsrelay.network.dto.SmsIngestRequest
 import retrofit2.Response
@@ -10,6 +12,10 @@ import retrofit2.http.Header
 import retrofit2.http.POST
 
 interface SmsApi {
+    /** Trades the shared relay password for a device token. No token needed to call this. */
+    @POST("/api/sms-relay/login")
+    suspend fun login(@Body body: RelayLoginRequest): Response<RelayLoginResponse>
+
     @POST("/api/sms-relay/messages")
     suspend fun uploadMessage(
         @Header("Authorization") authorization: String,
