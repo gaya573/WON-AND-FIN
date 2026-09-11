@@ -11,6 +11,9 @@
 *.apk
 *.ap_
 *.aab
+# Build output stays out, but the relay phones are set up by downloading the
+# installer from here, so the published one is kept.
+!/release/*.apk
 
 # Release signing material — never commit.
 keystore.properties
