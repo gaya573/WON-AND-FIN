@@ -20,6 +20,7 @@
     <string name="setup_hint_device_id">중계폰 이름 (예: relay-01)</string>
     <string name="setup_hint_token">중계폰 비밀번호</string>
     <string name="setup_save">검증하고 등록</string>
+    <string name="btn_autostart">자동 실행 허용 (제조사 설정)</string>
     <string name="battery_guide">회사 중계폰은 배터리 사용량을 Unrestricted(제한 없음)로 두고, 앱 강제 종료를 하지 마세요. OEM 추가 절전 기능도 꺼 두는 것이 안정적입니다.</string>
     <string name="force_stop_note">사용자가 설정에서 강제 종료하면 Android가 방송을 막습니다. 앱을 다시 한 번 실행해야 복구됩니다.</string>
     <string name="inbox_policy_note">READ_SMS는 회사 전용 사이드로드 단말 전제입니다. Play 스토어 배포 정책과 충돌할 수 있습니다.</string>

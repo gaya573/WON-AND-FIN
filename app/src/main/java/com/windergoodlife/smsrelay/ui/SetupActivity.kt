@@ -59,6 +59,15 @@ class SetupActivity : AppCompatActivity() {
                 startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
             }
         }
+        val guidance = AutoStartGuide.forThisDevice()
+        binding.autoStartSteps.text = guidance.steps.joinToString("\n") { "· $it" }
+        binding.btnAutoStart.text = guidance.title
+        binding.btnAutoStart.setOnClickListener {
+            if (!AutoStartGuide.openSettings(this, guidance)) {
+                Toast.makeText(this, "이 기기에서는 아래 안내대로 직접 설정하세요", Toast.LENGTH_LONG).show()
+            }
+        }
+
         binding.btnSave.setOnClickListener { verifyAndRegister() }
     }
 
