@@ -5,6 +5,7 @@ import com.windergoodlife.smsrelay.data.SmsDatabase
 import com.windergoodlife.smsrelay.network.ApiClient
 import com.windergoodlife.smsrelay.repository.SmsRepository
 import com.windergoodlife.smsrelay.security.DeviceTokenStore
+import com.windergoodlife.smsrelay.service.RelayForegroundService
 import com.windergoodlife.smsrelay.sync.InboxSyncManager
 import com.windergoodlife.smsrelay.worker.HeartbeatWorker
 import com.windergoodlife.smsrelay.worker.PendingSmsWorker
@@ -32,6 +33,7 @@ class SmsRelayApp : Application() {
         if (tokenStore.isConfigured()) {
             PendingSmsWorker.enqueue(this)
             HeartbeatWorker.enqueuePeriodic(this)
+            RelayForegroundService.start(this)
         }
     }
 

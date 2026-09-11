@@ -5,6 +5,7 @@ import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
@@ -42,6 +43,10 @@ class SmsUploadWorker(
                 .setConstraints(constraints)
                 .setInputData(workDataOf(KEY_LOCAL_ID to localId))
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+                // An authentication code is worth nothing once Doze has sat on it for fifteen
+                // minutes, so this jumps the queue; if the expedited quota is spent it still runs,
+                // just normally.
+                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .build()
             WorkManager.getInstance(context).enqueueUniqueWork(
                 UNIQUE_PREFIX + localId,

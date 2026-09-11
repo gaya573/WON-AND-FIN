@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import com.windergoodlife.smsrelay.SmsRelayApp
+import com.windergoodlife.smsrelay.service.RelayForegroundService
 import com.windergoodlife.smsrelay.worker.HeartbeatWorker
 import com.windergoodlife.smsrelay.worker.PendingSmsWorker
 
@@ -21,6 +22,7 @@ class BootReceiver : BroadcastReceiver() {
             if (app is SmsRelayApp && app.tokenStore.isConfigured()) {
                 PendingSmsWorker.enqueue(context)
                 HeartbeatWorker.enqueuePeriodic(context)
+                RelayForegroundService.start(context)
             } else {
                 // Process may cold-start Application; enqueue flush anyway if prefs exist later.
                 PendingSmsWorker.enqueue(context.applicationContext)

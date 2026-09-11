@@ -3,6 +3,7 @@ package com.windergoodlife.smsrelay.ui
 import android.Manifest
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Toast
@@ -13,6 +14,7 @@ import com.windergoodlife.smsrelay.R
 import com.windergoodlife.smsrelay.SmsRelayApp
 import com.windergoodlife.smsrelay.databinding.ActivitySetupBinding
 import com.windergoodlife.smsrelay.repository.RelayLoginException
+import com.windergoodlife.smsrelay.service.RelayForegroundService
 import com.windergoodlife.smsrelay.worker.HeartbeatWorker
 import com.windergoodlife.smsrelay.worker.PendingSmsWorker
 import kotlinx.coroutines.launch
@@ -38,9 +40,13 @@ class SetupActivity : AppCompatActivity() {
         store.getDeviceId()?.let { binding.inputDeviceId.setText(it) }
 
         binding.btnRequestSms.setOnClickListener {
-            permissionLauncher.launch(
-                arrayOf(Manifest.permission.RECEIVE_SMS, Manifest.permission.READ_SMS)
-            )
+            // The ongoing notification is the only sign the relay is alive on a phone nobody
+            // looks at, so it is requested together with SMS rather than left to chance.
+            val wanted = mutableListOf(Manifest.permission.RECEIVE_SMS, Manifest.permission.READ_SMS)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                wanted += Manifest.permission.POST_NOTIFICATIONS
+            }
+            permissionLauncher.launch(wanted.toTypedArray())
         }
         binding.btnBatterySetup.setOnClickListener {
             try {
@@ -95,6 +101,7 @@ class SetupActivity : AppCompatActivity() {
                 app.repository.refreshApi()
                 PendingSmsWorker.enqueue(this@SetupActivity)
                 HeartbeatWorker.enqueuePeriodic(this@SetupActivity)
+                RelayForegroundService.start(this@SetupActivity)
                 binding.setupMessage.setTextColor(getColor(R.color.ok))
                 binding.setupMessage.text = "등록 완료 — ${response.displayName ?: deviceId}"
                 Toast.makeText(this@SetupActivity, "등록 완료", Toast.LENGTH_SHORT).show()
