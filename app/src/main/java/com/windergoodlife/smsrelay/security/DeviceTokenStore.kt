@@ -4,6 +4,9 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import java.security.SecureRandom
+import java.util.Base64
+import java.util.UUID
 
 class DeviceTokenStore internal constructor(
     private val prefs: SharedPreferences?,
@@ -14,13 +17,56 @@ class DeviceTokenStore internal constructor(
     fun isConfigured(): Boolean =
         !getBaseUrl().isNullOrBlank() &&
             !getDeviceId().isNullOrBlank() &&
-            !getDeviceToken().isNullOrBlank()
+            !getDeviceToken().isNullOrBlank() &&
+            prefs?.getBoolean(KEY_CONNECTED, true) == true
 
     fun getBaseUrl(): String? = prefs?.getString(KEY_BASE_URL, null)?.trim()?.trimEnd('/')
 
     fun getDeviceId(): String? = prefs?.getString(KEY_DEVICE_ID, null)?.trim()
 
     fun getDeviceToken(): String? = prefs?.getString(KEY_DEVICE_TOKEN, null)?.trim()
+
+    /** Save the same installation identity before a request so an uncertain retry cannot rotate it. */
+    @Synchronized
+    fun prepareConnection(baseUrl: String, displayName: String): ConnectionIdentity {
+        require(baseUrl.startsWith("https://")) { "HTTPS only" }
+        val secure = requireSecurePreferences()
+        val existingId = getDeviceId()
+        val existingToken = getDeviceToken()
+        if (!existingId.isNullOrBlank() && !existingToken.isNullOrBlank()) {
+            check(secure.edit().putString(KEY_BASE_URL, baseUrl).commit()) { "연결 정보를 저장하지 못했습니다" }
+            return ConnectionIdentity(
+                existingId, existingToken,
+                secure.getString(KEY_DISPLAY_NAME, null) ?: displayName,
+                !secure.getBoolean(KEY_CONNECTED, true)
+            )
+        }
+        check(existingId.isNullOrBlank() && existingToken.isNullOrBlank()) {
+            "기존 연결 정보가 손상되었습니다. 관리자에게 이 휴대폰의 연결 상태를 확인해 주세요"
+        }
+        val identity = ConnectionIdentity(
+            UUID.randomUUID().toString(),
+            "frt_" + Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32).also { SecureRandom().nextBytes(it) }),
+            displayName.take(120),
+            true
+        )
+        val editor = secure.edit()
+            .putString(KEY_BASE_URL, baseUrl)
+            .putString(KEY_DEVICE_ID, identity.deviceId)
+            .putString(KEY_DEVICE_TOKEN, identity.token)
+            .putString(KEY_DISPLAY_NAME, identity.displayName)
+            .putBoolean(KEY_CONNECTED, false)
+        if (secure.getLong(KEY_LAST_SYNC, 0L) <= 0L) editor.putLong(KEY_LAST_SYNC, now())
+        check(editor.commit()) { "연결 정보를 안전하게 저장하지 못했습니다" }
+        return identity
+    }
+
+    @Synchronized
+    fun confirmConnection(deviceId: String) {
+        val secure = requireSecurePreferences()
+        check(getDeviceId() == deviceId) { "연결 정보가 변경되었습니다. 다시 연결해 주세요" }
+        check(secure.edit().putBoolean(KEY_CONNECTED, true).commit()) { "연결 상태를 저장하지 못했습니다" }
+    }
 
     @Synchronized
     fun getLastSyncTime(): Long {
@@ -48,12 +94,13 @@ class DeviceTokenStore internal constructor(
             .putString(KEY_BASE_URL, baseUrl.trim().trimEnd('/'))
             .putString(KEY_DEVICE_ID, deviceId.trim())
             .putString(KEY_DEVICE_TOKEN, deviceToken.trim())
+            .putBoolean(KEY_CONNECTED, true)
         if (secure.getLong(KEY_LAST_SYNC, 0L) <= 0L) editor.putLong(KEY_LAST_SYNC, now())
         check(editor.commit()) { "연결 정보를 안전하게 저장하지 못했습니다" }
     }
 
     fun clearToken() {
-        prefs?.edit()?.remove(KEY_DEVICE_TOKEN)?.apply()
+        prefs?.edit()?.remove(KEY_DEVICE_TOKEN)?.putBoolean(KEY_CONNECTED, false)?.apply()
     }
 
     private fun requireSecurePreferences(): SharedPreferences =
@@ -64,6 +111,8 @@ class DeviceTokenStore internal constructor(
         private const val KEY_DEVICE_ID = "device_id"
         private const val KEY_DEVICE_TOKEN = "device_token"
         private const val KEY_LAST_SYNC = "last_sync_time"
+        private const val KEY_CONNECTED = "connection_confirmed"
+        private const val KEY_DISPLAY_NAME = "display_name"
 
         private fun openSecurePreferences(context: Context): SharedPreferences? = try {
             val masterKey = MasterKey.Builder(context)
@@ -97,4 +146,12 @@ class DeviceTokenStore internal constructor(
             check(legacy.edit().clear().commit()) { "Legacy token cleanup failed" }
         }
     }
+
+    // Never use the default data-class toString, which would print the private token.
+    class ConnectionIdentity(
+        val deviceId: String,
+        val token: String,
+        val displayName: String,
+        val needsEnrollment: Boolean
+    )
 }

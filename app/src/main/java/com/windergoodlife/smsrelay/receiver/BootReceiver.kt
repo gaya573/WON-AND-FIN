@@ -19,17 +19,9 @@ class BootReceiver : BroadcastReceiver() {
         Log.i("SmsRelay", "boot completed")
         try {
             val app = context.applicationContext
-            if (app is SmsRelayApp && app.tokenStore.isConfigured()) {
-                PendingSmsWorker.enqueue(context)
-                HeartbeatWorker.enqueuePeriodic(context)
-                RelayForegroundService.start(context)
-            } else {
-                // Process may cold-start Application; enqueue flush anyway if prefs exist later.
-                PendingSmsWorker.enqueue(context.applicationContext)
-            }
+            if (app is SmsRelayApp) app.startRelayIfReady()
         } catch (e: Exception) {
             Log.w("SmsRelay", "boot enqueue fail ${e.javaClass.simpleName}")
-            PendingSmsWorker.enqueue(context.applicationContext)
         }
     }
 }

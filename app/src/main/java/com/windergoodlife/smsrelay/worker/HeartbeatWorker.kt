@@ -23,7 +23,8 @@ class HeartbeatWorker(
     override suspend fun doWork(): Result {
         val app = SmsRelayApp.get()
         val smsOk = ContextCompat.checkSelfPermission(applicationContext, Manifest.permission.RECEIVE_SMS) ==
-            PackageManager.PERMISSION_GRANTED
+            PackageManager.PERMISSION_GRANTED &&
+            ContextCompat.checkSelfPermission(applicationContext, Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED
         val pm = applicationContext.getSystemService(Context.POWER_SERVICE) as PowerManager
         val unrestricted = pm.isIgnoringBatteryOptimizations(applicationContext.packageName)
         val ok = app.repository.sendHeartbeat(smsOk, unrestricted)

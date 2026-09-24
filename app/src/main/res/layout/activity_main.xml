@@ -1,114 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:fillViewport="true"
-    android:background="@color/bg">
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="20dp">
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/app_name"
-            android:textColor="@color/text"
-            android:textSize="28sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:id="@+id/deviceLabel"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:textColor="@color/muted"
-            android:textSize="13sp" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:background="@color/surface"
-            android:orientation="vertical"
-            android:padding="16dp">
-
-            <TextView android:id="@+id/rowServer" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="@color/text" android:textSize="15sp" />
-            <TextView android:id="@+id/rowSmsPermission" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:textColor="@color/text" android:textSize="15sp" />
-            <TextView android:id="@+id/rowBattery" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:textColor="@color/text" android:textSize="15sp" />
-            <TextView android:id="@+id/rowLastSms" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:textColor="@color/text" android:textSize="15sp" />
-            <TextView android:id="@+id/rowLastUpload" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:textColor="@color/text" android:textSize="15sp" />
-            <TextView android:id="@+id/rowPending" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:textColor="@color/text" android:textSize="15sp" />
-            <TextView android:id="@+id/rowFailed" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:textColor="@color/text" android:textSize="15sp" />
-            <TextView android:id="@+id/rowAuthError" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:textColor="@color/text" android:textSize="15sp" />
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent" android:layout_height="match_parent" android:fillViewport="true" android:background="@color/bg">
+<LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical"
+    android:background="@color/bg" android:padding="24dp">
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="24dp"
+        android:text="문자 연결" android:textColor="@color/text" android:textSize="30sp" android:textStyle="bold" />
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp"
+        android:text="연결 버튼 한 번으로 시작하세요" android:textColor="@color/muted" android:textSize="16sp" />
+    <com.google.android.material.card.MaterialCardView android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="32dp" app:cardCornerRadius="20dp" app:cardElevation="0dp" app:strokeColor="#DFE5EF" app:strokeWidth="1dp" app:cardBackgroundColor="@color/surface">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="24dp">
+            <TextView android:id="@+id/rowServer" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="연결 전" android:textSize="24sp" android:textStyle="bold" android:textColor="@color/text" />
+            <TextView android:id="@+id/statusMessage" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="12dp" android:textSize="15sp" android:lineSpacingExtra="4dp" android:textColor="@color/muted" />
+            <View android:layout_width="match_parent" android:layout_height="1dp" android:layout_marginTop="24dp" android:layout_marginBottom="20dp" android:background="#E7EBF2" />
+            <TextView android:id="@+id/rowPermissions" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="14sp" android:textColor="@color/muted" />
+            <TextView android:id="@+id/rowLastUpload" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:textSize="14sp" android:textColor="@color/muted" />
+            <TextView android:id="@+id/rowPending" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:textSize="14sp" android:textColor="@color/muted" />
         </LinearLayout>
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="@string/battery_guide"
-            android:textColor="@color/muted"
-            android:textSize="12sp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="@string/force_stop_note"
-            android:textColor="@color/muted"
-            android:textSize="12sp" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnPing"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="@string/btn_ping" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnRetry"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/btn_retry_pending" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnSync"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/btn_sync_inbox" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnBattery"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/btn_battery" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnHealth"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/btn_health_check" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnSetup"
-            style="@style/Widget.MaterialComponents.Button.TextButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/btn_open_setup" />
-
-        <TextView
-            android:id="@+id/statusMessage"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:textColor="@color/muted"
-            android:textSize="13sp" />
+    </com.google.android.material.card.MaterialCardView>
+    <Space android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="24dp" android:layout_marginBottom="16dp" android:orientation="horizontal">
+        <com.google.android.material.button.MaterialButton android:id="@+id/btnSetup" style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="0dp" android:layout_height="56dp" android:layout_weight="1" android:layout_marginEnd="12dp" android:text="환경설정" android:textSize="16sp" app:cornerRadius="14dp" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/btnConnect" android:layout_width="0dp" android:layout_height="56dp"
+            android:layout_weight="1" android:text="연결" android:textSize="16sp" app:cornerRadius="14dp" />
     </LinearLayout>
+</LinearLayout>
 </ScrollView>

@@ -31,7 +31,7 @@ class SmsRepositoryRecoveryTest {
         `when`(dao.pendingCount()).thenAnswer { pending.size }
         doAnswer { if (it.getArgument<String>(1) == "SENT") pending.remove(it.getArgument<Long>(0)); null }
             .`when`(dao).updateUploadResult(anyLong(), anyString(), anyInt(), anyLong(), nullable(String::class.java), nullable(Int::class.javaObjectType))
-        `when`(api.uploadMessage(anyString(), anyString(), anyString(), any(SmsIngestRequest::class.java) ?: SmsIngestRequest("", "", "", "", "")))
+        `when`(api.uploadMessage(anyString(), anyString(), anyString(), any(SmsIngestRequest::class.java) ?: SmsIngestRequest("", "", "", "", ""), anyString()))
             .thenReturn(Response.success(SmsAckResponse(true, "synthetic-ack")))
         val repository = SmsRepository(mock(Context::class.java), dao, api, token)
         assertFalse(repository.flushPendingBatch())
@@ -54,7 +54,7 @@ class SmsRepositoryRecoveryTest {
         `when`(dao.recoverAuthenticationFailures()).thenAnswer {
             if (message.status == "ERROR_AUTH") { message = message.copy(status = "PENDING"); 1 } else 0
         }
-        `when`(api.uploadMessage(anyString(), anyString(), anyString(), any(SmsIngestRequest::class.java) ?: SmsIngestRequest("", "", "", "", "")))
+        `when`(api.uploadMessage(anyString(), anyString(), anyString(), any(SmsIngestRequest::class.java) ?: SmsIngestRequest("", "", "", "", ""), anyString()))
             .thenReturn(Response.error(401, "{}".toResponseBody()))
             .thenReturn(Response.success(SmsAckResponse(true, "synthetic-ack")))
         val repository = SmsRepository(mock(Context::class.java), dao, api, token)

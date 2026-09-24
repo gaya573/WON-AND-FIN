@@ -25,8 +25,7 @@ object ApiClient {
 
         // Base URL is resolved per-call via a dynamic interceptor-free Retrofit; repository
         // rebuilds when needed. Default placeholder satisfies Retrofit construction.
-        val base = tokenStore.getBaseUrl()?.takeIf { it.startsWith("https://") }
-            ?: BuildConfig.DEFAULT_BASE_URL
+        val base = BuildConfig.DEFAULT_BASE_URL
 
         require(base.toHttpUrlOrNull() != null) { "Invalid HTTPS base URL" }
 

@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Application
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.PowerManager
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
@@ -13,91 +14,88 @@ import androidx.lifecycle.asLiveData
 import androidx.lifecycle.viewModelScope
 import com.windergoodlife.smsrelay.SmsRelayApp
 import com.windergoodlife.smsrelay.data.SmsEntity
-import com.windergoodlife.smsrelay.worker.HeartbeatWorker
-import com.windergoodlife.smsrelay.worker.PendingSmsWorker
+import com.windergoodlife.smsrelay.repository.RelayConnectionException
+import com.windergoodlife.smsrelay.repository.RelayConnectionManager
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 class StatusViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as SmsRelayApp
-    private val timeFmt = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
-
+    private val timeFmt = SimpleDateFormat("MM.dd HH:mm", Locale.getDefault())
     val pendingCount: LiveData<Int> = app.repository.pendingFlow().asLiveData()
-    val failedCount: LiveData<Int> = app.repository.failedFlow().asLiveData()
-    val authErrorCount: LiveData<Int> = app.repository.authErrorFlow().asLiveData()
-    val latestSms: LiveData<SmsEntity?> = app.repository.latestFlow().asLiveData()
     val latestSent: LiveData<SmsEntity?> = app.repository.latestSentFlow().asLiveData()
-
-    private val _message = MutableLiveData<String>("")
+    private val _message = MutableLiveData("연결을 누르면 필요한 권한을 안내합니다")
     val message: LiveData<String> = _message
+    private val _connectionStatus = MutableLiveData("연결 전")
+    val connectionStatus: LiveData<String> = _connectionStatus
+    private val _connecting = MutableLiveData(false)
+    val connecting: LiveData<Boolean> = _connecting
 
-    private val _serverOk = MutableLiveData<Boolean?>(null)
-    val serverOk: LiveData<Boolean?> = _serverOk
+    fun formatTime(epochMs: Long?): String = if (epochMs == null || epochMs <= 0) "-" else timeFmt.format(Date(epochMs))
 
-    fun formatTime(epochMs: Long?): String =
-        if (epochMs == null || epochMs <= 0L) "-" else timeFmt.format(Date(epochMs))
+    fun hasSmsPermission(): Boolean =
+        ContextCompat.checkSelfPermission(app, Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED &&
+            ContextCompat.checkSelfPermission(app, Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED
 
-    fun hasSmsPermission(): Boolean {
-        val ctx = getApplication<Application>()
-        val recv = ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECEIVE_SMS) ==
-            PackageManager.PERMISSION_GRANTED
-        val read = ContextCompat.checkSelfPermission(ctx, Manifest.permission.READ_SMS) ==
-            PackageManager.PERMISSION_GRANTED
-        return recv && read
-    }
+    private fun isBatteryUnrestricted(): Boolean =
+        (app.getSystemService(Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(app.packageName)
 
-    fun isBatteryUnrestricted(): Boolean {
-        val ctx = getApplication<Application>()
-        val pm = ctx.getSystemService(Context.POWER_SERVICE) as PowerManager
-        return pm.isIgnoringBatteryOptimizations(ctx.packageName)
-    }
-
-    fun ping() {
-        viewModelScope.launch {
-            val (ok, detail) = app.repository.ping()
-            _serverOk.value = ok
-            _message.value = if (ok) "서버 정상 ($detail)" else "서버 오류 ($detail)"
+    fun refreshPermissionState() {
+        if (!hasSmsPermission() && _connecting.value != true) {
+            if (_connectionStatus.value == "연결됨") permissionDeclined(false)
         }
     }
 
-    fun retryPending() {
+    fun permissionDeclined(settingsRequired: Boolean) {
+        _connectionStatus.value = "SMS 권한이 필요합니다"
+        _message.value = if (settingsRequired) "권한 요청이 차단되어 있습니다. 환경설정에서 SMS 권한을 허용해 주세요"
+            else "문자를 전달하려면 SMS 권한이 필요합니다. 연결을 눌러 다시 허용해 주세요"
+    }
+
+    fun connect() {
+        if (_connecting.value == true) return
+        if (!hasSmsPermission()) { permissionDeclined(false); return }
+        _connecting.value = true
+        _connectionStatus.value = "연결 중"
+        _message.value = "휴대폰을 연결하고 있습니다"
         viewModelScope.launch {
-            PendingSmsWorker.enqueue(getApplication())
-            val sent = app.repository.uploadPending()
-            _message.value = "재전송 시도 완료 (이번 회차 SENT≈$sent)"
-        }
-    }
-
-    fun syncInbox() {
-        viewModelScope.launch {
-            val n = app.inboxSync.syncRecentMinutes(10)
-            _message.value = "최근 SMS 동기화: 신규 $n 건"
-        }
-    }
-
-    fun healthCheckText(): String {
-        val lines = mutableListOf<String>()
-        lines += if (app.tokenStore.isConfigured()) "설정: 완료" else "설정: 미완료 → 초기 설정 필요"
-        lines += if (hasSmsPermission()) "SMS 권한: 허용" else "SMS 권한: 부족"
-        lines += if (isBatteryUnrestricted()) "배터리: Unrestricted" else "배터리: 최적화 대상 (제외 권장)"
-        lines += "강제 종료 복구: 불가 — 앱을 다시 실행해야 함"
-        lines += "Doze: heartbeat/전송 지연 가능"
-        return lines.joinToString("\n")
-    }
-
-    fun ensureWorkers() {
-        if (app.tokenStore.isConfigured()) {
-            PendingSmsWorker.enqueue(getApplication())
-            HeartbeatWorker.enqueuePeriodic(getApplication())
-        }
-    }
-
-    fun syncFromCheckpoint() {
-        viewModelScope.launch {
-            val n = app.inboxSync.syncFromLastCheckpoint()
-            _message.value = "체크포인트 동기화: 신규 $n 건"
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    val health = app.repository.connectionHealth()
+                    RelayConnectionManager(app.tokenStore).connect(
+                        "${Build.MANUFACTURER} ${Build.MODEL}".trim().take(120),
+                        hasSmsPermission(), isBatteryUnrestricted(), health.first, health.second, health.third
+                    )
+                    check(hasSmsPermission()) { "문자 수신 권한을 허용한 뒤 다시 연결해 주세요" }
+                    app.repository.refreshApi()
+                    app.repository.recoverAuthenticationFailures()
+                }
+            }
+            _connecting.value = false
+            result.onSuccess {
+                app.startRelayIfReady()
+                _connectionStatus.value = "연결됨"
+                _message.value = "이제 수신되는 문자가 관리자 화면으로 전달됩니다"
+                // Recover only messages after the original consent/connection checkpoint.
+                withContext(Dispatchers.IO) { runCatching { app.inboxSync.syncFromLastCheckpoint() } }
+            }.onFailure {
+                _connectionStatus.value = "연결을 확인해 주세요"
+                _message.value = when {
+                    it is RelayConnectionException && it.code == 401 -> "저장된 연결 정보를 사용할 수 없습니다. 관리자에게 이 휴대폰의 연결 상태를 확인해 주세요"
+                    it is RelayConnectionException && it.code == 403 -> "사용 중지된 휴대폰입니다. 관리자에게 연결 상태를 확인해 주세요"
+                    it is RelayConnectionException && it.code == 429 -> "연결 요청이 많습니다. 잠시 후 다시 연결해 주세요"
+                    it is RelayConnectionException && it.code == 400 -> "휴대폰 정보를 확인하지 못했습니다. 앱을 다시 실행한 뒤 연결해 주세요"
+                    it is RelayConnectionException -> "서버에 연결하지 못했습니다. 잠시 후 다시 연결해 주세요"
+                    it is IOException -> "인터넷 연결을 확인한 뒤 다시 연결해 주세요"
+                    it is IllegalStateException -> it.message ?: "연결 상태를 확인한 뒤 다시 연결해 주세요"
+                    else -> "연결하지 못했습니다. 앱을 다시 실행한 뒤 연결해 주세요"
+                }
+            }
         }
     }
 }

@@ -9,8 +9,6 @@ import com.windergoodlife.smsrelay.data.SmsStatus
 import com.windergoodlife.smsrelay.network.ApiClient
 import com.windergoodlife.smsrelay.network.SmsApi
 import com.windergoodlife.smsrelay.network.dto.HeartbeatRequest
-import com.windergoodlife.smsrelay.network.dto.RelayLoginRequest
-import com.windergoodlife.smsrelay.network.dto.RelayLoginResponse
 import com.windergoodlife.smsrelay.network.dto.SmsIngestRequest
 import com.windergoodlife.smsrelay.security.DeviceTokenStore
 import com.windergoodlife.smsrelay.util.SafeLog
@@ -28,24 +26,6 @@ class SmsRepository(
 ) {
     fun refreshApi() {
         api = ApiClient.recreate(tokenStore)
-    }
-
-    /**
-     * Asks the server whether the relay password is right, against the base URL the operator just
-     * typed rather than the stored one, so nothing is persisted before the answer comes back.
-     */
-    suspend fun verifyRelayPassword(
-        baseUrl: String,
-        deviceId: String,
-        password: String
-    ): RelayLoginResponse {
-        val probe = ApiClient.createForBaseUrl(baseUrl)
-        val response = probe.login(RelayLoginRequest(deviceId, deviceId, password))
-        if (!response.isSuccessful) {
-            Log.i(TAG, "relay login rejected status=${response.code()}")
-            throw RelayLoginException(response.code())
-        }
-        return response.body() ?: throw RelayLoginException(response.code())
     }
 
     /**
@@ -67,7 +47,7 @@ class SmsRepository(
         }
         val localId = if (rowId > 0L) rowId else dao.findByUniqueKey(key)?.id
         Log.i(TAG, "saved id=$localId key=${SafeLog.shortKey(key)} sender=${SafeLog.maskSender(sender)} status=PENDING")
-        if (localId != null && localId > 0L) {
+        if (localId != null && localId > 0L && tokenStore.isConfigured()) {
             SmsUploadWorker.enqueue(context, localId)
         }
         return localId
@@ -107,7 +87,8 @@ class SmsRepository(
                     message = entity.message,
                     receivedAt = formatIso(entity.receivedAt),
                     deviceId = deviceId
-                )
+                ),
+                deviceId = deviceId
             )
             val code = response.code()
             when {
@@ -208,6 +189,10 @@ class SmsRepository(
 
     suspend fun recoverAuthenticationFailures(): Int = dao.recoverAuthenticationFailures()
 
+    suspend fun connectionHealth(): Triple<Int, Int, String?> = Triple(
+        dao.pendingCount(), dao.failedCount(), dao.latestReceivedAt()?.let(::formatIso)
+    )
+
     /** A recovery worker must keep draining even when there are more than one batch of rows. */
     suspend fun flushPendingBatch(): Boolean {
         uploadPending()
@@ -233,10 +218,11 @@ class SmsRepository(
                     smsPermission = smsPermission,
                     batteryUnrestricted = batteryUnrestricted,
                     lastSmsAt = lastSmsAt
-                )
+                ),
+                deviceId = deviceId
             )
             Log.i(TAG, "heartbeat http=${response.code()} pending=$pending")
-            response.isSuccessful
+            response.isSuccessful && response.body()?.success == true
         } catch (e: Exception) {
             Log.w(TAG, "heartbeat fail ${e.javaClass.simpleName}")
             false
@@ -250,7 +236,8 @@ class SmsRepository(
             val token = tokenStore.getDeviceToken().orEmpty()
             val response = api.ping(
                 authorization = "Bearer $token",
-                deviceToken = token
+                deviceToken = token,
+                deviceId = tokenStore.getDeviceId()
             )
             val ok = response.isSuccessful && response.body()?.success != false
             ok to "HTTP ${response.code()}"
