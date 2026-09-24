@@ -20,12 +20,16 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.windergoodlife.smsrelay.BuildConfig
 import com.windergoodlife.smsrelay.SmsRelayApp
 import com.windergoodlife.smsrelay.diagnostics.ConnectionLogFormatter
+import com.windergoodlife.smsrelay.diagnostics.SmsAccessSnapshotCollector
 import com.windergoodlife.smsrelay.databinding.ActivitySetupBinding
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** Only Android consent/settings live here. Connection credentials are managed by the app. */
 class SetupActivity : AppCompatActivity() {
     private lateinit var binding: ActivitySetupBinding
+    private var copyingLogs = false
     private val smsPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { refreshStatus() }
     private val notificationLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { refreshStatus() }
 
@@ -56,18 +60,33 @@ class SetupActivity : AppCompatActivity() {
         binding.btnAppPermissions.setOnClickListener {
             openSettings(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).setData(Uri.parse("package:$packageName")))
         }
-        binding.logsDescription.text = "앱 ${BuildConfig.VERSION_NAME} · 최근 6건 표시 · 최대 50건 보관\n복사하면 보관된 로그 전체를 확인할 수 있습니다."
+        binding.logsDescription.text = "앱 ${BuildConfig.VERSION_NAME} · 최근 6건 표시 · 최대 50건 보관\n복사하면 SMS_RECEIVED 수신 기록과 현재 문자함 접근 상태를 함께 확인할 수 있습니다."
         val logs = (application as SmsRelayApp).connectionLogs
         binding.btnCopyLogs.setOnClickListener {
-            val text = "SMS Relay ${BuildConfig.VERSION_NAME}\n" + ConnectionLogFormatter.format(logs.entries.value)
-            (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("최근 연결 로그", text))
-            Toast.makeText(this, "연결 로그를 복사했습니다", Toast.LENGTH_SHORT).show()
+            if (copyingLogs) return@setOnClickListener
+            copyingLogs = true
+            binding.btnCopyLogs.isEnabled = false
+            lifecycleScope.launch {
+                try {
+                    val app = application as SmsRelayApp
+                    val snapshot = withContext(Dispatchers.IO) {
+                        runCatching { SmsAccessSnapshotCollector(app, app.database.smsDao(), app.tokenStore).collect().format() }
+                            .getOrDefault("현재 접근 상태: 확인 불가")
+                    }
+                    val text = "SMS Relay ${BuildConfig.VERSION_NAME}\n$snapshot\n\n" + ConnectionLogFormatter.format(logs.entries.value)
+                    (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("최근 연결 로그", text))
+                    Toast.makeText(this@SetupActivity, "연결 로그를 복사했습니다", Toast.LENGTH_SHORT).show()
+                } finally {
+                    copyingLogs = false
+                    binding.btnCopyLogs.isEnabled = true
+                }
+            }
         }
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 logs.entries.collect { entries ->
                     binding.connectionLogs.text = ConnectionLogFormatter.format(entries.takeLast(6))
-                    binding.btnCopyLogs.isEnabled = entries.isNotEmpty()
+                    binding.btnCopyLogs.isEnabled = !copyingLogs
                 }
             }
         }

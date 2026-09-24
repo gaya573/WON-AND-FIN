@@ -19,11 +19,13 @@ enum class ConnectionLogStage(val label: String) {
     PERMISSION("SMS 권한"), PREPARING("연결 준비"), REGISTER("휴대폰 등록"), AUTO_REGISTER("자동등록 확인"),
     PING("서버 응답 확인"), HEARTBEAT("연결 상태 전송"), COMPLETE("연결 결과"),
     INBOX("누락 문자 확인"), UPLOAD("문자 전송"), SYNC("문자 동기화"),
-    SMS_RECEIVE("새 문자 수신"), LOCAL_STORE("휴대폰 저장"), UPLOAD_QUEUE("전송 예약"), SMS_PROVIDER("문자함 변경 확인")
+    SMS_RECEIVE("SMS_RECEIVED 새 문자 수신"), LOCAL_STORE("휴대폰 저장"), UPLOAD_QUEUE("전송 예약"), SMS_PROVIDER("문자함 변경 확인"),
+    SMS_CALLBACK("SmsReceiver.onReceive 진입"), SMS_PDU("SMS_RECEIVED PDU 배열"),
+    SMS_DECODE("SMS_RECEIVED PDU 해석"), SMS_GROUPS("SMS_RECEIVED 발신자 그룹"), SMS_ASYNC("SMS_RECEIVED 비동기 처리")
 }
 
 enum class ConnectionLogOutcome(val label: String) {
-    WAITING("허용 대기"), STARTED("시작"), SUCCEEDED("성공"), FAILED("실패"), ALREADY_STORED("기존 저장 유지")
+    WAITING("허용 대기"), STARTED("시작"), SUCCEEDED("성공"), FAILED("실패"), ALREADY_STORED("기존 저장 유지"), IGNORED("처리 대상 아님")
 }
 
 enum class ConnectionFailureReason(val label: String) {
@@ -34,7 +36,9 @@ enum class ConnectionFailureReason(val label: String) {
     CANCELLED("연결 작업 중단"), PROVIDER_RESET("문자함 변경으로 복구 확인 필요"),
     PROVIDER_UNAVAILABLE("문자함 조회 실패"), LOCAL_STORAGE("휴대폰 저장 실패"),
     AUTH_REJECTED("기기 연결 확인 필요"), PAYLOAD_REJECTED("전송 데이터 확인 필요"),
-    SMS_DECODE("수신 문자 확인 실패"), WORK_SCHEDULING("전송 작업 예약 실패"), CONNECTION_REQUIRED("서버 연결 확인 대기")
+    SMS_DECODE("수신 문자 확인 실패"), WORK_SCHEDULING("전송 작업 예약 실패"), CONNECTION_REQUIRED("서버 연결 확인 대기"),
+    SMS_ACTION_MISSING("action 없음"), SMS_ACTION_OTHER("다른 action"), SMS_PDU_UNAVAILABLE("PDU 배열 확인 불가"),
+    SMS_ASYNC_UNAVAILABLE("goAsync 시작 실패"), SMS_PROCESSING("수신 문자 처리 실패")
 }
 
 /** Only allowlisted values enter diagnostics. Never serialize exception messages or request data. */

@@ -82,4 +82,13 @@ interface SmsDao {
 
     @Query("SELECT receivedAt FROM sms_messages ORDER BY receivedAt DESC LIMIT 1")
     suspend fun latestReceivedAt(): Long?
+
+    @Query("""SELECT COUNT(*) AS total,
+        COUNT(CASE WHEN status IN ('PENDING','FAILED','SENDING') THEN 1 END) AS pending,
+        COUNT(CASE WHEN status = 'FAILED' THEN 1 END) AS failed,
+        COUNT(CASE WHEN status IN ('ERROR_AUTH','ERROR_PAYLOAD') THEN 1 END) AS blocked,
+        COUNT(CASE WHEN status = 'SENT' THEN 1 END) AS sent FROM sms_messages""")
+    suspend fun diagnosticCounts(): LocalSmsCounts
 }
+
+data class LocalSmsCounts(val total: Int, val pending: Int, val failed: Int, val blocked: Int, val sent: Int)
