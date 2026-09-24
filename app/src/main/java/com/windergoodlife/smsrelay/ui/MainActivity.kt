@@ -3,13 +3,16 @@ package com.windergoodlife.smsrelay.ui
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.os.Build
 import android.os.Bundle
+import android.view.View
 import androidx.activity.viewModels
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.windergoodlife.smsrelay.SmsRelayApp
+import com.windergoodlife.smsrelay.R
 import com.windergoodlife.smsrelay.databinding.ActivityMainBinding
 
 class MainActivity : AppCompatActivity() {
@@ -34,14 +37,10 @@ class MainActivity : AppCompatActivity() {
         binding.root.keepContentInsideSystemBars()
         binding.btnSetup.setOnClickListener { startActivity(Intent(this, SetupActivity::class.java)) }
         binding.btnConnect.setOnClickListener {
-            if (vm.connecting.value != true) handle(permissionFlow.connectTapped(vm.hasSmsPermission()))
+            if (vm.display.value?.status?.busy != true) handle(permissionFlow.connectTapped(vm.hasSmsPermission()))
         }
-        vm.connectionStatus.observe(this) { binding.rowServer.text = it }
-        vm.message.observe(this) { binding.statusMessage.text = it }
-        vm.connecting.observe(this) {
-            binding.btnConnect.isEnabled = !it
-            binding.btnConnect.text = if (it) "연결 중…" else "연결"
-        }
+        vm.display.observe(this, ::renderConnection)
+        if (permissionFlow.pendingConnect && !vm.hasSmsPermission()) vm.awaitingPermission()
         vm.pendingCount.observe(this) {
             binding.rowPending.text = if (it > 0) "전송 대기 $it 건" else "전송 대기 없음"
         }
@@ -49,7 +48,8 @@ class MainActivity : AppCompatActivity() {
             binding.rowLastUpload.text = if (it == null) "아직 전달한 문자가 없습니다" else "마지막 전달 ${vm.formatTime(it.lastAttemptAt)}"
         }
         // Previously connected installations can reconnect; fresh installs wait for the Connect tap.
-        if (!permissionFlow.pendingConnect && (application as SmsRelayApp).tokenStore.isConfigured() && vm.hasSmsPermission()) vm.connect()
+        if (!permissionFlow.pendingConnect && vm.shouldAutoConnect() &&
+            (application as SmsRelayApp).tokenStore.isConfigured() && vm.hasSmsPermission()) vm.connect()
     }
 
     override fun onResume() {
@@ -70,9 +70,29 @@ class MainActivity : AppCompatActivity() {
         binding.rowPermissions.text = if (vm.hasSmsPermission()) "SMS 권한 허용됨" else "연결할 때 SMS 권한을 요청합니다"
     }
 
+    private fun renderConnection(display: ConnectionStatusDisplay) {
+        val color = ContextCompat.getColor(this, when (display.status) {
+            ConnectionStatus.CONNECTED -> R.color.ok
+            ConnectionStatus.FAILED -> R.color.bad
+            ConnectionStatus.PERMISSION, ConnectionStatus.CONNECTING -> R.color.accent
+            ConnectionStatus.IDLE -> R.color.muted
+        })
+        binding.rowServer.text = display.status.title
+        binding.rowServer.setTextColor(color)
+        binding.statusMessage.text = display.detail
+        binding.statusIcon.text = display.status.symbol
+        binding.statusIcon.setTextColor(color)
+        binding.connectionProgress.indeterminateTintList = ColorStateList.valueOf(color)
+        binding.connectionProgress.visibility = if (display.status.busy) View.VISIBLE else View.GONE
+        binding.btnConnect.isEnabled = !display.status.busy
+    }
+
     private fun handle(action: ConnectionPermissionFlow.Action) {
         when (action) {
-            ConnectionPermissionFlow.Action.REQUEST_SMS -> smsLauncher.launch(arrayOf(Manifest.permission.RECEIVE_SMS, Manifest.permission.READ_SMS))
+            ConnectionPermissionFlow.Action.REQUEST_SMS -> {
+                vm.awaitingPermission()
+                smsLauncher.launch(arrayOf(Manifest.permission.RECEIVE_SMS, Manifest.permission.READ_SMS))
+            }
             ConnectionPermissionFlow.Action.CONNECT -> {
                 vm.connect()
                 val prompts = getSharedPreferences("permission_prompts", MODE_PRIVATE)

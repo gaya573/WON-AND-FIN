@@ -30,7 +30,9 @@ class RelayConnectionManagerTest {
 
     @Test fun `new phone confirms only after enrollment ping and successful heartbeat`() = runBlocking<Unit> {
         ready()
-        manager.connect("Test phone", true, false)
+        val progress = mutableListOf<ConnectionProgress>()
+        manager.connect("Test phone", true, false) { progress += it }
+        assertEquals(listOf(ConnectionProgress.REGISTERING, ConnectionProgress.CHECKING_SERVER, ConnectionProgress.REPORTING_STATUS), progress)
         val order = inOrder(store, api)
         order.verify(store).prepareConnection("https://api.dealerhub.co.kr", "Test phone")
         order.verify(api).connect(identity.token, RelayConnectRequest(identity.deviceId, identity.displayName))
@@ -41,7 +43,9 @@ class RelayConnectionManagerTest {
 
     @Test fun `legacy valid phone verifies without reenrollment`() = runBlocking<Unit> {
         ready(false)
-        manager.connect("Test phone", true, true)
+        val progress = mutableListOf<ConnectionProgress>()
+        manager.connect("Test phone", true, true) { progress += it }
+        assertEquals(listOf(ConnectionProgress.CHECKING_SERVER, ConnectionProgress.REPORTING_STATUS), progress)
         verify(api, never()).connect(anyString(), request())
         verify(store).confirmConnection(identity.deviceId)
     }
@@ -49,7 +53,9 @@ class RelayConnectionManagerTest {
     @Test fun `invalid old credential never silently enrolls a new phone`() = runBlocking<Unit> {
         ready(false)
         `when`(api.ping(anyString(), anyString(), anyString())).thenReturn(Response.error(401, "{}".toResponseBody()))
-        try { manager.connect("Test phone", true, false); fail("must fail") } catch (error: RelayConnectionException) { assertEquals(401, error.code) }
+        val progress = mutableListOf<ConnectionProgress>()
+        try { manager.connect("Test phone", true, false) { progress += it }; fail("must fail") } catch (error: RelayConnectionException) { assertEquals(401, error.code) }
+        assertEquals(listOf(ConnectionProgress.CHECKING_SERVER), progress)
         verify(api, never()).connect(anyString(), request())
         verify(store, never()).confirmConnection(anyString())
     }
@@ -75,7 +81,9 @@ class RelayConnectionManagerTest {
     @Test fun `HTTP 200 false heartbeat is not connected`() = runBlocking<Unit> {
         ready()
         `when`(api.heartbeat(anyString(), anyString(), heartbeat(), anyString())).thenReturn(Response.success(RelayHeartbeatResponse(false)))
-        try { manager.connect("Test phone", true, false); fail("must fail") } catch (_: IllegalStateException) { }
+        val progress = mutableListOf<ConnectionProgress>()
+        try { manager.connect("Test phone", true, false) { progress += it }; fail("must fail") } catch (_: IllegalStateException) { }
+        assertEquals(ConnectionProgress.REPORTING_STATUS, progress.last())
         verify(store, never()).confirmConnection(anyString())
     }
 

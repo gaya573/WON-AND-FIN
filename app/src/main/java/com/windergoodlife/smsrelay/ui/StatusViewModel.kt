@@ -29,12 +29,9 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
     private val timeFmt = SimpleDateFormat("MM.dd HH:mm", Locale.getDefault())
     val pendingCount: LiveData<Int> = app.repository.pendingFlow().asLiveData()
     val latestSent: LiveData<SmsEntity?> = app.repository.latestSentFlow().asLiveData()
-    private val _message = MutableLiveData("연결을 누르면 필요한 권한을 안내합니다")
-    val message: LiveData<String> = _message
-    private val _connectionStatus = MutableLiveData("연결 전")
-    val connectionStatus: LiveData<String> = _connectionStatus
-    private val _connecting = MutableLiveData(false)
-    val connecting: LiveData<Boolean> = _connecting
+    private val status = ConnectionStatusTracker()
+    private val _display = MutableLiveData(status.display)
+    val display: LiveData<ConnectionStatusDisplay> = _display
 
     fun formatTime(epochMs: Long?): String = if (epochMs == null || epochMs <= 0) "-" else timeFmt.format(Date(epochMs))
 
@@ -46,23 +43,27 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
         (app.getSystemService(Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(app.packageName)
 
     fun refreshPermissionState() {
-        if (!hasSmsPermission() && _connecting.value != true) {
-            if (_connectionStatus.value == "연결됨") permissionDeclined(false)
-        }
+        status.permissionsRefreshed(hasSmsPermission())
+        _display.value = status.display
     }
 
+    fun awaitingPermission() {
+        status.awaitingPermission()
+        _display.value = status.display
+    }
+
+    fun shouldAutoConnect(): Boolean = status.shouldAutoConnect()
+
     fun permissionDeclined(settingsRequired: Boolean) {
-        _connectionStatus.value = "SMS 권한이 필요합니다"
-        _message.value = if (settingsRequired) "권한 요청이 차단되어 있습니다. 환경설정에서 SMS 권한을 허용해 주세요"
-            else "문자를 전달하려면 SMS 권한이 필요합니다. 연결을 눌러 다시 허용해 주세요"
+        status.failed(if (settingsRequired) "권한 요청이 차단되어 있습니다. 환경설정에서 SMS 권한을 허용해 주세요"
+            else "문자를 전달하려면 SMS 권한이 필요합니다. 연결을 눌러 다시 허용해 주세요")
+        _display.value = status.display
     }
 
     fun connect() {
-        if (_connecting.value == true) return
         if (!hasSmsPermission()) { permissionDeclined(false); return }
-        _connecting.value = true
-        _connectionStatus.value = "연결 중"
-        _message.value = "휴대폰을 연결하고 있습니다"
+        if (!status.startConnection()) return
+        _display.value = status.display
         viewModelScope.launch {
             val result = runCatching {
                 withContext(Dispatchers.IO) {
@@ -70,22 +71,25 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
                     RelayConnectionManager(app.tokenStore).connect(
                         "${Build.MANUFACTURER} ${Build.MODEL}".trim().take(120),
                         hasSmsPermission(), isBatteryUnrestricted(), health.first, health.second, health.third
-                    )
+                    ) { progress ->
+                        withContext(Dispatchers.Main) {
+                            status.progress(progress)
+                            _display.value = status.display
+                        }
+                    }
                     check(hasSmsPermission()) { "문자 수신 권한을 허용한 뒤 다시 연결해 주세요" }
                     app.repository.refreshApi()
                     app.repository.recoverAuthenticationFailures()
                 }
+                check(app.startRelayIfReady()) { "SMS 권한을 확인한 뒤 다시 연결해 주세요" }
             }
-            _connecting.value = false
             result.onSuccess {
-                app.startRelayIfReady()
-                _connectionStatus.value = "연결됨"
-                _message.value = "이제 수신되는 문자가 관리자 화면으로 전달됩니다"
+                status.connected()
+                _display.value = status.display
                 // Recover only messages after the original consent/connection checkpoint.
                 withContext(Dispatchers.IO) { runCatching { app.inboxSync.syncFromLastCheckpoint() } }
             }.onFailure {
-                _connectionStatus.value = "연결을 확인해 주세요"
-                _message.value = when {
+                val detail = when {
                     it is RelayConnectionException && it.code == 401 -> "저장된 연결 정보를 사용할 수 없습니다. 관리자에게 이 휴대폰의 연결 상태를 확인해 주세요"
                     it is RelayConnectionException && it.code == 403 -> "사용 중지된 휴대폰입니다. 관리자에게 연결 상태를 확인해 주세요"
                     it is RelayConnectionException && it.code == 429 -> "연결 요청이 많습니다. 잠시 후 다시 연결해 주세요"
@@ -95,6 +99,8 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
                     it is IllegalStateException -> it.message ?: "연결 상태를 확인한 뒤 다시 연결해 주세요"
                     else -> "연결하지 못했습니다. 앱을 다시 실행한 뒤 연결해 주세요"
                 }
+                status.failed(detail)
+                _display.value = status.display
             }
         }
     }
