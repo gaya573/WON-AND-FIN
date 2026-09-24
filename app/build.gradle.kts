@@ -21,9 +21,9 @@ android {
         applicationId = "com.windergoodlife.smsrelay"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
-        buildConfigField("String", "DEFAULT_BASE_URL", "\"https://api.wonder.p-e.kr\"")
+        versionCode = 2
+        versionName = "1.0.1"
+        buildConfigField("String", "DEFAULT_BASE_URL", "\"https://api.dealerhub.co.kr\"")
     }
 
     signingConfigs {
@@ -62,7 +62,10 @@ android {
         viewBinding = true
         buildConfig = true
     }
+    testOptions.unitTests.isReturnDefaultValues = true
 }
+
+tasks.withType<Test>().configureEach { useJUnitPlatform() }
 
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
@@ -87,4 +90,6 @@ dependencies {
     ksp("com.squareup.moshi:moshi-kotlin-codegen:1.15.1")
 
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    testImplementation("org.junit.jupiter:junit-jupiter:5.10.3")
+    testImplementation("org.mockito:mockito-core:5.11.0")
 }

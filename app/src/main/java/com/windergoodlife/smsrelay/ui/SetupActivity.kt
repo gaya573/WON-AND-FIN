@@ -11,6 +11,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.windergoodlife.smsrelay.R
+import com.windergoodlife.smsrelay.BuildConfig
 import com.windergoodlife.smsrelay.SmsRelayApp
 import com.windergoodlife.smsrelay.databinding.ActivitySetupBinding
 import com.windergoodlife.smsrelay.repository.RelayLoginException
@@ -18,6 +19,8 @@ import com.windergoodlife.smsrelay.service.RelayForegroundService
 import com.windergoodlife.smsrelay.worker.HeartbeatWorker
 import com.windergoodlife.smsrelay.worker.PendingSmsWorker
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.IOException
 
 class SetupActivity : AppCompatActivity() {
@@ -36,7 +39,7 @@ class SetupActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         val store = (application as SmsRelayApp).tokenStore
-        store.getBaseUrl()?.let { binding.inputBaseUrl.setText(it) }
+        binding.inputBaseUrl.setText(store.getBaseUrl() ?: BuildConfig.DEFAULT_BASE_URL)
         store.getDeviceId()?.let { binding.inputDeviceId.setText(it) }
 
         binding.btnRequestSms.setOnClickListener {
@@ -97,17 +100,18 @@ class SetupActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val app = application as SmsRelayApp
             val result = runCatching {
-                app.repository.verifyRelayPassword(base, deviceId, password)
+                val response = app.repository.verifyRelayPassword(base, deviceId, password)
+                val token = response.deviceToken
+                check(!token.isNullOrBlank()) { "서버가 토큰을 주지 않았습니다. 관리자에게 문의하세요" }
+                withContext(Dispatchers.IO) {
+                    app.tokenStore.save(base, deviceId, token)
+                    app.repository.refreshApi()
+                    app.repository.recoverAuthenticationFailures()
+                }
+                response
             }
             setBusy(false)
             result.onSuccess { response ->
-                val token = response.deviceToken
-                if (token.isNullOrBlank()) {
-                    showError("서버가 토큰을 주지 않았습니다. 관리자에게 문의하세요")
-                    return@onSuccess
-                }
-                app.tokenStore.save(base, deviceId, token)
-                app.repository.refreshApi()
                 PendingSmsWorker.enqueue(this@SetupActivity)
                 HeartbeatWorker.enqueuePeriodic(this@SetupActivity)
                 RelayForegroundService.start(this@SetupActivity)

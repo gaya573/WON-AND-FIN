@@ -2,6 +2,7 @@ package com.windergoodlife.smsrelay.network
 
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import com.windergoodlife.smsrelay.BuildConfig
 import com.windergoodlife.smsrelay.security.DeviceTokenStore
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
@@ -25,7 +26,7 @@ object ApiClient {
         // Base URL is resolved per-call via a dynamic interceptor-free Retrofit; repository
         // rebuilds when needed. Default placeholder satisfies Retrofit construction.
         val base = tokenStore.getBaseUrl()?.takeIf { it.startsWith("https://") }
-            ?: "https://api.wonder.p-e.kr"
+            ?: BuildConfig.DEFAULT_BASE_URL
 
         require(base.toHttpUrlOrNull() != null) { "Invalid HTTPS base URL" }
 

@@ -21,8 +21,7 @@ class PendingSmsWorker(
     override suspend fun doWork(): Result {
         val repo = SmsRelayApp.get().repository
         return try {
-            repo.uploadPending()
-            Result.success()
+            if (repo.flushPendingBatch()) Result.success() else Result.retry()
         } catch (_: Exception) {
             Result.retry()
         }

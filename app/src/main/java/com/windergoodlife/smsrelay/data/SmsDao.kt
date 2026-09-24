@@ -65,6 +65,9 @@ interface SmsDao {
     @Query("UPDATE sms_messages SET status = :status WHERE id = :id")
     suspend fun updateStatus(id: Long, status: String)
 
+    @Query("UPDATE sms_messages SET status = 'PENDING', httpLastStatus = NULL WHERE status = 'ERROR_AUTH'")
+    suspend fun recoverAuthenticationFailures(): Int
+
     @Query("SELECT COUNT(*) FROM sms_messages WHERE status IN ('PENDING', 'FAILED', 'SENDING')")
     suspend fun pendingCount(): Int
 
