@@ -111,6 +111,21 @@ class DeviceTokenStore internal constructor(
     }
 
     @Synchronized
+    fun getLastInboxSmsId(): Long? = requireSecurePreferences()
+        .getLong(KEY_LAST_INBOX_ID, -1L).takeIf { it >= 0L }
+
+    /** Advance the provider cursor only after every selected message is safely in Room. */
+    @Synchronized
+    fun commitInboxCheckpoint(smsId: Long, epochMs: Long) {
+        require(smsId >= 0L)
+        val secure = requireSecurePreferences()
+        check(secure.edit()
+            .putLong(KEY_LAST_INBOX_ID, maxOf(secure.getLong(KEY_LAST_INBOX_ID, -1L), smsId))
+            .putLong(KEY_LAST_SYNC, maxOf(secure.getLong(KEY_LAST_SYNC, 0L), epochMs))
+            .commit()) { "동기화 기록을 저장하지 못했습니다" }
+    }
+
+    @Synchronized
     fun save(baseUrl: String, deviceId: String, deviceToken: String) {
         require(baseUrl.startsWith("https://")) { "HTTPS only" }
         val secure = requireSecurePreferences()
@@ -135,6 +150,7 @@ class DeviceTokenStore internal constructor(
         private const val KEY_DEVICE_ID = "device_id"
         private const val KEY_DEVICE_TOKEN = "device_token"
         private const val KEY_LAST_SYNC = "last_sync_time"
+        private const val KEY_LAST_INBOX_ID = "last_inbox_sms_id"
         private const val KEY_CONNECTED = "connection_confirmed"
         private const val KEY_CONNECTION_GENERATION = "connection_generation"
         private const val KEY_DISPLAY_NAME = "display_name"

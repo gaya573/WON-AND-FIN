@@ -2,6 +2,7 @@ package com.windergoodlife.smsrelay.repository
 
 import com.windergoodlife.smsrelay.BuildConfig
 import com.windergoodlife.smsrelay.network.ApiClient
+import com.windergoodlife.smsrelay.network.RelayEndpoint
 import com.windergoodlife.smsrelay.network.SmsApi
 import com.windergoodlife.smsrelay.network.dto.RelayConnectRequest
 import com.windergoodlife.smsrelay.network.dto.HeartbeatRequest
@@ -26,8 +27,9 @@ class RelayConnectionManager(
         var identity: DeviceTokenStore.ConnectionIdentity
         val api: SmsApi
         try {
-            identity = store.prepareConnection(BuildConfig.DEFAULT_BASE_URL, displayName)
-            api = client(BuildConfig.DEFAULT_BASE_URL)
+            val baseUrl = RelayEndpoint.resolve(store.getBaseUrl())
+            identity = store.prepareConnection(baseUrl, displayName)
+            api = client(baseUrl)
             log(ConnectionDiagnostic(ConnectionLogStage.PREPARING, ConnectionLogOutcome.SUCCEEDED))
         } catch (failure: Exception) {
             log(connectionFailure(ConnectionLogStage.PREPARING, failure))

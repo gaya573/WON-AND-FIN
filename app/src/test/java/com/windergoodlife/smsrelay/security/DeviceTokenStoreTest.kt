@@ -53,6 +53,21 @@ class DeviceTokenStoreTest {
         assertEquals(200L, store.getLastSyncTime())
     }
 
+    @Test fun `provider watermark advances with the time cursor and survives reconnect and restart`() {
+        val values = mutableMapOf<String, Any>("last_sync_time" to 100L)
+        val prefs = preferences(values)
+        val store = DeviceTokenStore(prefs) { 500L }
+        assertNull(store.getLastInboxSmsId())
+        store.commitInboxCheckpoint(42L, 200L)
+        store.commitInboxCheckpoint(40L, 150L)
+        val identity = store.prepareConnection("https://api.dealerhub.co.kr", "Phone")
+        store.confirmConnection(identity.deviceId)
+        store.recoverUnregisteredIdentity(identity)
+        val restarted = DeviceTokenStore(prefs) { 600L }
+        assertEquals(42L, restarted.getLastInboxSmsId())
+        assertEquals(200L, restarted.getLastSyncTime())
+    }
+
     @Test fun `new connection persists one identity but cannot start workers before confirmation`() {
         val values = mutableMapOf<String, Any>()
         val prefs = preferences(values)

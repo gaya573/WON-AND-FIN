@@ -39,7 +39,7 @@ class RelayConnectionManagerTest {
         manager.connect("Test phone", true, false) { progress += it }
         assertEquals(listOf(ConnectionProgress.REGISTERING, ConnectionProgress.CHECKING_SERVER, ConnectionProgress.REPORTING_STATUS), progress)
         val order = inOrder(store, api)
-        order.verify(store).prepareConnection("https://api.dealerhub.co.kr", "Test phone")
+        order.verify(store).prepareConnection("https://chat.dealerhub.co.kr", "Test phone")
         order.verify(api).connect(identity.token, RelayConnectRequest(identity.deviceId, identity.displayName))
         order.verify(api).ping("Bearer ${identity.token}", identity.token, identity.deviceId)
         order.verify(api).heartbeat(anyString(), anyString(), heartbeat(), anyString())
@@ -56,6 +56,26 @@ class RelayConnectionManagerTest {
         assertEquals(listOf(ConnectionProgress.CHECKING_SERVER, ConnectionProgress.REPORTING_STATUS), progress)
         verify(api, never()).connect(anyString(), request())
         verify(store).confirmConnection(identity.deviceId)
+    }
+
+    @Test fun `existing production configuration and client move to Node together`() = runBlocking<Unit> {
+        ready(false)
+        `when`(store.getBaseUrl()).thenReturn("https://api.dealerhub.co.kr")
+        val selected = mutableListOf<String>()
+        RelayConnectionManager(store, ConnectionLogSink { }) { selected += it; api }.connect("Test phone", true, false)
+        verify(store).prepareConnection("https://chat.dealerhub.co.kr", "Test phone")
+        assertEquals(listOf("https://chat.dealerhub.co.kr"), selected)
+        verify(api, never()).connect(anyString(), request())
+    }
+
+    @Test fun `custom endpoint is retained during connection without changing its identity`() = runBlocking<Unit> {
+        ready(false)
+        `when`(store.getBaseUrl()).thenReturn("https://relay.example.test")
+        val selected = mutableListOf<String>()
+        RelayConnectionManager(store, ConnectionLogSink { }) { selected += it; api }.connect("Test phone", true, false)
+        verify(store).prepareConnection("https://relay.example.test", "Test phone")
+        assertEquals(listOf("https://relay.example.test"), selected)
+        verify(api, never()).connect(anyString(), request())
     }
 
     @Test fun `legacy manual identity never blindly enrolls on 401`() = runBlocking<Unit> {
@@ -174,7 +194,7 @@ class RelayConnectionManagerTest {
         assertEquals(listOf(ConnectionProgress.CHECKING_SERVER, ConnectionProgress.RECHECKING_REGISTRATION,
             ConnectionProgress.CHECKING_SERVER, ConnectionProgress.REPORTING_STATUS), progress)
         val order = inOrder(store, api)
-        order.verify(store).prepareConnection("https://api.dealerhub.co.kr", "Test phone")
+        order.verify(store).prepareConnection("https://chat.dealerhub.co.kr", "Test phone")
         order.verify(api).ping("Bearer ${identity.token}", identity.token, identity.deviceId)
         order.verify(store).recoverUnregisteredIdentity(savedIdentity())
         order.verify(api).connect(identity.token, RelayConnectRequest(identity.deviceId, identity.displayName))
@@ -240,7 +260,7 @@ class RelayConnectionManagerTest {
         `when`(api.ping(anyString(), anyString(), anyString())).thenReturn(missingRegistration(), Response.success(PingResponse(true)))
         manager.connect("Test phone", true, false)
         val order = inOrder(store, api)
-        order.verify(store).prepareConnection("https://api.dealerhub.co.kr", "Test phone")
+        order.verify(store).prepareConnection("https://chat.dealerhub.co.kr", "Test phone")
         order.verify(api).ping("Bearer ${legacy.token}", legacy.token, legacy.deviceId)
         order.verify(store).recoverUnregisteredIdentity(legacy)
         order.verify(api).connect(identity.token, RelayConnectRequest(identity.deviceId, identity.displayName))

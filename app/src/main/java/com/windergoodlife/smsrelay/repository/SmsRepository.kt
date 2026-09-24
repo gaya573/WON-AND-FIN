@@ -14,6 +14,8 @@ import com.windergoodlife.smsrelay.security.DeviceTokenStore
 import com.windergoodlife.smsrelay.util.SafeLog
 import com.windergoodlife.smsrelay.util.SmsKeys
 import com.windergoodlife.smsrelay.worker.SmsUploadWorker
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -24,6 +26,10 @@ class SmsRepository(
     private var api: SmsApi,
     private val tokenStore: DeviceTokenStore
 ) {
+    // Both the individual worker and backlog worker use the application repository.
+    // Hold this through the acknowledgement write so a second worker sees SENT.
+    private val uploadMutex = Mutex()
+
     fun refreshApi() {
         api = ApiClient.recreate(tokenStore)
     }
@@ -53,7 +59,11 @@ class SmsRepository(
         return localId
     }
 
-    suspend fun uploadOne(localId: Long): UploadOutcome {
+    suspend fun uploadOne(localId: Long): UploadOutcome = uploadMutex.withLock {
+        uploadOneLocked(localId)
+    }
+
+    private suspend fun uploadOneLocked(localId: Long): UploadOutcome {
         val entity = dao.findById(localId) ?: return UploadOutcome.GiveUp
         if (entity.status == SmsStatus.SENT.name) return UploadOutcome.Success
         if (entity.status == SmsStatus.ERROR_AUTH.name || entity.status == SmsStatus.ERROR_PAYLOAD.name) {

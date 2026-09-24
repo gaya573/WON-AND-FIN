@@ -10,6 +10,8 @@ import androidx.core.content.ContextCompat
 import com.windergoodlife.smsrelay.repository.SmsRepository
 import com.windergoodlife.smsrelay.security.DeviceTokenStore
 import com.windergoodlife.smsrelay.util.SafeLog
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Optional inbox backfill when READ_SMS is granted (company sideload devices).
@@ -23,6 +25,8 @@ class InboxSyncManager(
     private val tokenStore: DeviceTokenStore = com.windergoodlife.smsrelay.SmsRelayApp.get().tokenStore,
     private val now: () -> Long = System::currentTimeMillis
 ) {
+    private val recoveryMutex = Mutex()
+
     suspend fun syncSince(lastSyncExclusiveMs: Long, advanceCheckpoint: Boolean = true): Int {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) !=
             PackageManager.PERMISSION_GRANTED
@@ -71,9 +75,66 @@ class InboxSyncManager(
         return syncSince(since, advanceCheckpoint = false)
     }
 
-    suspend fun syncFromLastCheckpoint(): Int {
-        val since = tokenStore.getLastSyncTime()
-        return syncSince(since)
+    suspend fun syncFromLastCheckpoint(): Int = recoveryMutex.withLock {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) return@withLock 0
+
+        val snapshotEnd = now()
+        val uri = Uri.parse("content://sms/inbox")
+        val snapshotId = try {
+            context.contentResolver.query(uri, arrayOf("_id"), null, null, "_id DESC")?.use { cursor ->
+                if (!cursor.moveToNext()) 0L else {
+                    val column = cursor.getColumnIndex("_id")
+                    if (column < 0) null else cursor.getLong(column)
+                }
+            }
+        } catch (_: SecurityException) {
+            null
+        } ?: return@withLock 0
+
+        val previousId = tokenStore.getLastInboxSmsId()
+        // A reset provider must not silently rewind our cursor and replay its entire history.
+        if (previousId != null && snapshotId < previousId) {
+            Log.w(TAG, "inbox recovery postponed: provider cursor moved backwards")
+            return@withLock 0
+        }
+        if (previousId == snapshotId) return@withLock 0
+
+        val selection: String
+        val args: Array<String>
+        if (previousId == null) {
+            // Upgrade from the existing time cursor; do not extend collection before consent.
+            // Include the boundary, with Room's unique key preserving already saved messages.
+            selection = "date >= ? AND _id <= ?"
+            args = arrayOf(tokenStore.getLastSyncTime().toString(), snapshotId.toString())
+        } else {
+            // Provider insertion order catches late rows and equal SMS timestamps as well.
+            selection = "_id > ? AND _id <= ?"
+            args = arrayOf(previousId.toString(), snapshotId.toString())
+        }
+        val cursor = try {
+            context.contentResolver.query(uri, arrayOf("_id", "address", "body", "date"), selection, args, "_id ASC")
+        } catch (_: SecurityException) {
+            null
+        } ?: return@withLock 0
+
+        var inserted = 0
+        cursor.use { rows ->
+            val addressColumn = rows.getColumnIndex("address")
+            val bodyColumn = rows.getColumnIndex("body")
+            val dateColumn = rows.getColumnIndex("date")
+            check(addressColumn >= 0 && bodyColumn >= 0 && dateColumn >= 0) { "Incomplete SMS provider response" }
+            while (rows.moveToNext()) {
+                val body = rows.getString(bodyColumn).orEmpty()
+                if (body.isBlank()) continue
+                val sender = rows.getString(addressColumn).orEmpty()
+                if (repository.saveIncoming(sender, body, rows.getLong(dateColumn)) != null) inserted++
+            }
+            tokenStore.commitInboxCheckpoint(snapshotId, snapshotEnd)
+        }
+        Log.i(TAG, "inbox recovery inserted=$inserted")
+        inserted
     }
 
     companion object {
