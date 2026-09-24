@@ -11,12 +11,14 @@ import com.windergoodlife.smsrelay.repository.SmsRepository
 import com.windergoodlife.smsrelay.security.DeviceTokenStore
 import com.windergoodlife.smsrelay.service.RelayForegroundService
 import com.windergoodlife.smsrelay.sync.InboxSyncManager
+import com.windergoodlife.smsrelay.sync.SyncStateStore
 import com.windergoodlife.smsrelay.worker.HeartbeatWorker
 import com.windergoodlife.smsrelay.worker.PendingSmsWorker
 
 class SmsRelayApp : Application() {
 
     val connectionLogs: ConnectionLogStore by lazy { ConnectionLogStore(this) }
+    val syncState: SyncStateStore by lazy { SyncStateStore(this) }
 
     lateinit var tokenStore: DeviceTokenStore
         private set
@@ -32,17 +34,19 @@ class SmsRelayApp : Application() {
         instance = this
         tokenStore = DeviceTokenStore(this)
         database = SmsDatabase.get(this)
+        ApiClient.diagnostics = connectionLogs
         val api = ApiClient.create(tokenStore)
-        repository = SmsRepository(this, database.smsDao(), api, tokenStore)
+        repository = SmsRepository(this, database.smsDao(), api, tokenStore, connectionLogs)
         inboxSync = InboxSyncManager(this, repository)
 
         startRelayIfReady()
     }
 
-    fun startRelayIfReady(): Boolean {
-        val smsPermission = ContextCompat.checkSelfPermission(this, Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED &&
+    fun hasSmsPermission(): Boolean = ContextCompat.checkSelfPermission(this, Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED
-        if (tokenStore.isConfigured() && smsPermission) {
+
+    fun startRelayIfReady(): Boolean {
+        if (tokenStore.isConfigured() && hasSmsPermission()) {
             PendingSmsWorker.enqueue(this)
             HeartbeatWorker.enqueuePeriodic(this)
             RelayForegroundService.start(this)

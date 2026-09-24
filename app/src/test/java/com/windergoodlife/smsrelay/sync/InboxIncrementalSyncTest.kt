@@ -23,6 +23,7 @@ class InboxIncrementalSyncTest {
         val queries = mutableListOf<Pair<String, List<Long>>>()
         val saved = mutableSetOf<Long>()
         var providerCursor: Long? = null
+        var upgradeSnapshot: Long? = null
         var timeCursor = 100L
         var now = 200L
         var beforeSave: (Long) -> Unit = {}
@@ -33,9 +34,12 @@ class InboxIncrementalSyncTest {
             `when`(context.contentResolver).thenReturn(resolver)
             `when`(store.getLastSyncTime()).thenAnswer { timeCursor }
             `when`(store.getLastInboxSmsId()).thenAnswer { providerCursor }
+            `when`(store.getInboxUpgradeSnapshot()).thenAnswer { upgradeSnapshot }
+            doAnswer { upgradeSnapshot = it.getArgument<Long>(0); null }.`when`(store).beginInboxUpgrade(anyLong())
+            doAnswer { upgradeSnapshot = null; null }.`when`(store).finishInboxUpgrade()
             doAnswer { providerCursor = it.getArgument<Long>(0); timeCursor = it.getArgument<Long>(1); null }
                 .`when`(store).commitInboxCheckpoint(anyLong(), anyLong())
-            `when`(repository.saveIncoming(anyString(), anyString(), anyLong())).thenAnswer {
+            `when`(repository.saveRecovered(anyString(), anyString(), anyLong())).thenAnswer {
                 val id = it.getArgument<String>(1).removePrefix("synthetic message ").toLong()
                 beforeSave(id)
                 if (saved.add(id)) id else null
@@ -49,7 +53,8 @@ class InboxIncrementalSyncTest {
                     val bounds = call.getArgument<Array<String>>(3).map { it.toLong() }
                     queries += selection to bounds
                     if (nullMessages) null else cursor(inbox.filter {
-                        (if (selection.startsWith("date")) it.date >= bounds[0] else it.id > bounds[0]) && it.id <= bounds[1]
+                        (if (selection.startsWith("date")) it.date >= bounds[0] else it.id > bounds[0]) &&
+                            (bounds.size != 3 || it.id > bounds[1]) && it.id <= bounds.last()
                     }.sortedBy { it.id }, projection)
                 }
             }
@@ -123,10 +128,10 @@ class InboxIncrementalSyncTest {
         val fixture = Fixture()
         fixture.setup()
         fixture.nullSnapshot = true
-        assertEquals(0, fixture.manager().syncFromLastCheckpoint())
+        assertThrows(InboxRecoveryException::class.java) { runBlocking { fixture.manager().syncFromLastCheckpoint() } }
         fixture.nullSnapshot = false
         fixture.nullMessages = true
-        assertEquals(0, fixture.manager().syncFromLastCheckpoint())
+        assertThrows(InboxRecoveryException::class.java) { runBlocking { fixture.manager().syncFromLastCheckpoint() } }
         verify(fixture.store, never()).commitInboxCheckpoint(anyLong(), anyLong())
     }
 
@@ -134,9 +139,61 @@ class InboxIncrementalSyncTest {
         val fixture = Fixture()
         fixture.setup()
         fixture.providerCursor = 20L
-        assertEquals(0, fixture.manager().syncFromLastCheckpoint())
+        val failure = assertThrows(InboxRecoveryException::class.java) { runBlocking { fixture.manager().syncFromLastCheckpoint() } }
+        assertEquals(com.windergoodlife.smsrelay.diagnostics.ConnectionFailureReason.PROVIDER_RESET, failure.reason)
+        assertFalse(failure.retryable)
         assertTrue(fixture.saved.isEmpty())
         assertTrue(fixture.queries.isEmpty())
         verify(fixture.store, never()).commitInboxCheckpoint(anyLong(), anyLong())
+    }
+
+    @Test fun `bounded upgrade pages preserve original consent and snapshot across process restart`() = runBlocking<Unit> {
+        val fixture = Fixture()
+        fixture.setup()
+        fixture.inbox += Message(3, 150)
+        fixture.inbox += Message(4, 25) // Historical row interspersed by provider id.
+        fixture.inbox += Message(5, 180)
+        val first = fixture.manager().recoverBatch(limit = 1)
+        assertEquals(1, first.inserted)
+        assertTrue(first.hasMore)
+        assertEquals(2L, fixture.providerCursor)
+        assertEquals(100L, fixture.timeCursor)
+        fixture.inbox += Message(6, 190)
+        val second = fixture.manager().recoverBatch(limit = 1)
+        assertTrue(second.hasMore)
+        assertEquals(3L, fixture.providerCursor)
+        val third = fixture.manager().recoverBatch(limit = 1)
+        assertTrue(third.hasMore) // Fresh arrival beyond the original snapshot is a later pass.
+        assertEquals(setOf(2L, 3L, 5L), fixture.saved)
+        assertNull(fixture.upgradeSnapshot)
+        assertEquals(1, fixture.manager().recoverBatch().inserted)
+        assertEquals(setOf(2L, 3L, 5L, 6L), fixture.saved)
+    }
+
+    @Test fun `completed partial page survives next page failure without skipping its unsaved suffix`() = runBlocking<Unit> {
+        val fixture = Fixture()
+        fixture.setup()
+        fixture.inbox += Message(3, 110)
+        fixture.manager().recoverBatch(limit = 1)
+        fixture.beforeSave = { if (it == 3L) throw IllegalStateException("synthetic disk failure") }
+        assertThrows(IllegalStateException::class.java) { runBlocking { fixture.manager().recoverBatch() } }
+        assertEquals(2L, fixture.providerCursor)
+        fixture.beforeSave = {}
+        assertEquals(1, fixture.manager().recoverBatch().inserted)
+        assertEquals(setOf(2L, 3L), fixture.saved)
+    }
+
+    @Test fun `deleting an unscanned newest row during upgrade does not block its remaining pages`() = runBlocking<Unit> {
+        val fixture = Fixture()
+        fixture.setup()
+        fixture.inbox += Message(3, 110)
+        fixture.inbox += Message(4, 120)
+        assertTrue(fixture.manager().recoverBatch(limit = 1).hasMore)
+        fixture.inbox.removeAll { it.id == 4L }
+        assertEquals(1, fixture.manager().recoverBatch().inserted)
+        assertEquals(setOf(2L, 3L), fixture.saved)
+        assertEquals(3L, fixture.providerCursor)
+        assertNull(fixture.upgradeSnapshot)
+        assertFalse(fixture.manager().recoverBatch().hasMore)
     }
 }

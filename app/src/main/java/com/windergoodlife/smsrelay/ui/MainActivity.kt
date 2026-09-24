@@ -44,6 +44,11 @@ class MainActivity : AppCompatActivity() {
         vm.pendingCount.observe(this) {
             binding.rowPending.text = if (it > 0) "전송 대기 $it 건" else "전송 대기 없음"
         }
+        vm.syncPhase.observe(this) { binding.rowSync.text = it.label }
+        vm.blockedCount.observe(this) {
+            binding.rowBlocked.visibility = if (it > 0) View.VISIBLE else View.GONE
+            binding.rowBlocked.text = "자동 전송 중단 $it 건 · 연결 로그를 확인해 주세요"
+        }
         vm.latestSent.observe(this) {
             binding.rowLastUpload.text = if (it == null) "아직 전달한 문자가 없습니다" else "마지막 전달 ${vm.formatTime(it.lastAttemptAt)}"
         }

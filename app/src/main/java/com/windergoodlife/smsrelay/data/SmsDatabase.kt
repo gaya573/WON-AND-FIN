@@ -19,7 +19,7 @@ abstract class SmsDatabase : RoomDatabase() {
                     context.applicationContext,
                     SmsDatabase::class.java,
                     "sms_relay.db"
-                ).fallbackToDestructiveMigration()
+                ) // A future schema change must provide a data-preserving Migration.
                     .build()
                     .also { instance = it }
             }

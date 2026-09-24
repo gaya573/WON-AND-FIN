@@ -36,6 +36,9 @@ interface SmsDao {
     @Query("SELECT COUNT(*) FROM sms_messages WHERE status = 'ERROR_AUTH'")
     fun observeAuthErrorCount(): Flow<Int>
 
+    @Query("SELECT COUNT(*) FROM sms_messages WHERE status IN ('ERROR_AUTH', 'ERROR_PAYLOAD')")
+    fun observeBlockedCount(): Flow<Int>
+
     @Query("SELECT * FROM sms_messages ORDER BY receivedAt DESC LIMIT 1")
     fun observeLatest(): Flow<SmsEntity?>
 

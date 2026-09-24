@@ -17,6 +17,7 @@ class DeviceTokenStoreTest {
         `when`(editor.putString(anyString(), anyString())).thenAnswer { values[it.getArgument<String>(0)] = it.getArgument<String>(1); editor }
         `when`(editor.putLong(anyString(), anyLong())).thenAnswer { values[it.getArgument<String>(0)] = it.getArgument<Long>(1); editor }
         `when`(editor.putBoolean(anyString(), anyBoolean())).thenAnswer { values[it.getArgument<String>(0)] = it.getArgument<Boolean>(1); editor }
+        `when`(editor.remove(anyString())).thenAnswer { values.remove(it.getArgument<String>(0)); editor }
         `when`(editor.commit()).thenReturn(true)
         return prefs
     }
@@ -27,6 +28,25 @@ class DeviceTokenStoreTest {
         store.save("https://example.test", "test-phone", "synthetic-token")
         assertEquals(123_000L, store.getLastSyncTime())
         assertTrue(store.isConfigured())
+    }
+
+    @Test fun `partial inbox upgrade retains identity and consent across restart then clears only its marker`() {
+        val values = mutableMapOf<String, Any>()
+        val prefs = preferences(values)
+        val store = DeviceTokenStore(prefs) { 100L }
+        store.save("https://example.test", "phone", "token")
+        store.beginInboxUpgrade(500)
+        store.commitInboxCheckpoint(250, 100)
+        val restarted = DeviceTokenStore(prefs) { 300L }
+        assertEquals(500L, restarted.getInboxUpgradeSnapshot())
+        assertEquals(250L, restarted.getLastInboxSmsId())
+        assertEquals(100L, restarted.getLastSyncTime())
+        restarted.finishInboxUpgrade()
+        assertNull(restarted.getInboxUpgradeSnapshot())
+        assertEquals("phone", restarted.getDeviceId())
+        assertEquals("token", restarted.getDeviceToken())
+        assertTrue(restarted.isConfigured())
+        assertEquals(250L, restarted.getLastInboxSmsId())
     }
 
     @Test fun `token renewal preserves pending inbox recovery checkpoint`() {

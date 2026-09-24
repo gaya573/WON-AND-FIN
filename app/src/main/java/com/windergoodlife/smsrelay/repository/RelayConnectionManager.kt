@@ -85,14 +85,16 @@ class RelayConnectionManager(
 
     private suspend fun <T> request(stage: ConnectionLogStage, call: suspend () -> Response<T>, accepted: (T?) -> Boolean, logStart: Boolean = true) {
         if (logStart) log(ConnectionDiagnostic(stage, ConnectionLogOutcome.STARTED))
+        var requestId: String? = null
         try {
             val response = call()
+            requestId = safeRequestId(response.headers()["X-Request-ID"])
             if (!response.isSuccessful) throw RelayConnectionException(response.code(),
                 stage == ConnectionLogStage.PING && response.code() == 410 && isUnregisteredResponse(response.errorBody()))
             if (!accepted(response.body())) throw ConnectionVerificationException(response.code())
-            log(ConnectionDiagnostic(stage, ConnectionLogOutcome.SUCCEEDED, response.code()))
+            log(ConnectionDiagnostic(stage, ConnectionLogOutcome.SUCCEEDED, response.code(), requestId = requestId))
         } catch (failure: Exception) {
-            log(connectionFailure(stage, failure))
+            log(connectionFailure(stage, failure).copy(requestId = requestId))
             throw failure
         }
     }

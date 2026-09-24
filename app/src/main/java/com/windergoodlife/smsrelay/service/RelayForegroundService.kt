@@ -10,12 +10,16 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.windergoodlife.smsrelay.R
 import com.windergoodlife.smsrelay.SmsRelayApp
 import com.windergoodlife.smsrelay.ui.MainActivity
+import com.windergoodlife.smsrelay.worker.PendingSmsWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -42,6 +46,17 @@ import java.util.Locale
 class RelayForegroundService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val clock = SimpleDateFormat("HH:mm", Locale.KOREA)
+    private var observingNetwork = false
+    private var online = false
+    private val connectivity by lazy { getSystemService(ConnectivityManager::class.java) }
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+            val usable = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            if (usable && !online && SmsRelayApp.get().tokenStore.isConfigured()) PendingSmsWorker.enqueue(this@RelayForegroundService)
+            online = usable
+        }
+        override fun onLost(network: Network) { online = false }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -50,11 +65,18 @@ class RelayForegroundService : Service() {
         createChannel()
         startForegroundCompat(buildNotification(null, 0, 0))
         observeState()
+        try {
+            connectivity.registerDefaultNetworkCallback(networkCallback)
+            observingNetwork = true
+        } catch (_: Exception) {
+            Log.w(TAG, "network recovery observer unavailable; periodic recovery remains scheduled")
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
 
     override fun onDestroy() {
+        if (observingNetwork) runCatching { connectivity.unregisterNetworkCallback(networkCallback) }
         scope.cancel()
         super.onDestroy()
     }

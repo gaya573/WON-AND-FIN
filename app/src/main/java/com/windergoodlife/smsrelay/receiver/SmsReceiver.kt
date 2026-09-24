@@ -6,7 +6,6 @@ import android.content.Intent
 import android.provider.Telephony
 import android.util.Log
 import com.windergoodlife.smsrelay.SmsRelayApp
-import com.windergoodlife.smsrelay.util.SafeLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -44,7 +43,7 @@ class SmsReceiver : BroadcastReceiver() {
                 val repo = SmsRelayApp.get().repository
                 bySender.forEach { (sender, pair) ->
                     val (body, ts) = pair
-                    Log.i("SmsRelay", "recv sender=${SafeLog.maskSender(sender)}")
+                    Log.i("SmsRelay", "SMS received")
                     repo.saveIncoming(sender, body.toString(), ts)
                 }
             } catch (e: Exception) {

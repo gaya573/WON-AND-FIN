@@ -27,6 +27,8 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
     private val app = application as SmsRelayApp
     private val timeFmt = SimpleDateFormat("MM.dd HH:mm", Locale.getDefault())
     val pendingCount: LiveData<Int> = app.repository.pendingFlow().asLiveData()
+    val blockedCount: LiveData<Int> = app.repository.blockedFlow().asLiveData()
+    val syncPhase = app.syncState.phase.asLiveData()
     val latestSent: LiveData<SmsEntity?> = app.repository.latestSentFlow().asLiveData()
     private val status = ConnectionStatusTracker()
     private val _display = MutableLiveData(status.display)
@@ -91,8 +93,7 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
                 app.connectionLogs.record(ConnectionDiagnostic(ConnectionLogStage.COMPLETE, ConnectionLogOutcome.SUCCEEDED))
                 status.connected()
                 _display.value = status.display
-                // Recover only messages after the original consent/connection checkpoint.
-                withContext(Dispatchers.IO) { runCatching { app.inboxSync.syncFromLastCheckpoint() } }
+                // startRelayIfReady schedules the same recovery used by boot/network restoration.
             }.onFailure {
                 app.connectionLogs.record(connectionFailure(ConnectionLogStage.COMPLETE, it))
                 status.failed(connectionFailureMessage(it))

@@ -22,6 +22,8 @@ class HeartbeatWorker(
 
     override suspend fun doWork(): Result {
         val app = SmsRelayApp.get()
+        // Periodic fallback also recovers provider-only messages after a killed process.
+        if (app.tokenStore.isConfigured()) PendingSmsWorker.enqueue(applicationContext)
         val smsOk = ContextCompat.checkSelfPermission(applicationContext, Manifest.permission.RECEIVE_SMS) ==
             PackageManager.PERMISSION_GRANTED &&
             ContextCompat.checkSelfPermission(applicationContext, Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED

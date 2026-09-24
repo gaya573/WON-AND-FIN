@@ -114,6 +114,23 @@ class DeviceTokenStore internal constructor(
     fun getLastInboxSmsId(): Long? = requireSecurePreferences()
         .getLong(KEY_LAST_INBOX_ID, -1L).takeIf { it >= 0L }
 
+    fun getInboxUpgradeSnapshot(): Long? = requireSecurePreferences()
+        .getLong(KEY_INBOX_UPGRADE_SNAPSHOT, -1L).takeIf { it >= 0L }
+
+    @Synchronized
+    fun beginInboxUpgrade(snapshotId: Long) {
+        check(requireSecurePreferences().edit().putLong(KEY_INBOX_UPGRADE_SNAPSHOT, snapshotId).commit()) {
+            "동기화 기록을 저장하지 못했습니다"
+        }
+    }
+
+    @Synchronized
+    fun finishInboxUpgrade() {
+        check(requireSecurePreferences().edit().remove(KEY_INBOX_UPGRADE_SNAPSHOT).commit()) {
+            "동기화 기록을 저장하지 못했습니다"
+        }
+    }
+
     /** Advance the provider cursor only after every selected message is safely in Room. */
     @Synchronized
     fun commitInboxCheckpoint(smsId: Long, epochMs: Long) {
@@ -151,6 +168,7 @@ class DeviceTokenStore internal constructor(
         private const val KEY_DEVICE_TOKEN = "device_token"
         private const val KEY_LAST_SYNC = "last_sync_time"
         private const val KEY_LAST_INBOX_ID = "last_inbox_sms_id"
+        private const val KEY_INBOX_UPGRADE_SNAPSHOT = "inbox_upgrade_snapshot"
         private const val KEY_CONNECTED = "connection_confirmed"
         private const val KEY_CONNECTION_GENERATION = "connection_generation"
         private const val KEY_DISPLAY_NAME = "display_name"

@@ -1,6 +1,7 @@
 package com.windergoodlife.smsrelay.worker
 
 import android.content.Context
+import android.os.Build
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -46,7 +47,10 @@ class SmsUploadWorker(
                 // An authentication code is worth nothing once Doze has sat on it for fifteen
                 // minutes, so this jumps the queue; if the expedited quota is spent it still runs,
                 // just normally.
-                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                .apply {
+                    if (supportsExpeditedUpload(Build.VERSION.SDK_INT))
+                        setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                }
                 .build()
             WorkManager.getInstance(context).enqueueUniqueWork(
                 UNIQUE_PREFIX + localId,
