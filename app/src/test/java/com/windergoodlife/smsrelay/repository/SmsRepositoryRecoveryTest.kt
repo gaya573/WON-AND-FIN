@@ -64,4 +64,37 @@ class SmsRepositoryRecoveryTest {
         assertEquals(SmsRepository.UploadOutcome.Success, repository.uploadOne(1L))
         assertEquals("SENT", message.status)
     }
+
+    @Test fun `late401 after same token recovery remains retryable including during auth status write`() = runBlocking<Unit> {
+        for (recoverDuringWrite in listOf(false, true)) {
+            val dao = mock(SmsDao::class.java)
+            val api = mock(SmsApi::class.java)
+            val token = mock(DeviceTokenStore::class.java)
+            var generation = 1L
+            var message = SmsEntity(1L, "key", "sender", "synthetic-message", 10_000L)
+            `when`(token.isConfigured()).thenReturn(true)
+            `when`(token.getDeviceToken()).thenReturn("same-synthetic-token")
+            `when`(token.getDeviceId()).thenReturn("same-phone")
+            `when`(token.getConnectionGeneration()).thenAnswer { generation }
+            `when`(dao.findById(1L)).thenAnswer { message }
+            doAnswer {
+                message = message.copy(status = it.getArgument<String>(1))
+                if (recoverDuringWrite && message.status == "ERROR_AUTH") generation = 2L
+                null
+            }.`when`(dao).updateUploadResult(anyLong(), anyString(), anyInt(), anyLong(), nullable(String::class.java), nullable(Int::class.javaObjectType))
+            `when`(dao.retryAuthenticationFailure(1L)).thenAnswer {
+                if (message.status == "ERROR_AUTH") { message = message.copy(status = "FAILED"); 1 } else 0
+            }
+            `when`(api.uploadMessage(anyString(), anyString(), anyString(), any(SmsIngestRequest::class.java) ?: SmsIngestRequest("", "", "", "", ""), anyString()))
+                .thenAnswer {
+                    if (!recoverDuringWrite) generation = 2L
+                    Response.error<SmsAckResponse>(401, "{}".toResponseBody())
+                }.thenReturn(Response.success(SmsAckResponse(true, "synthetic-ack")))
+            val repository = SmsRepository(mock(Context::class.java), dao, api, token)
+            assertEquals(SmsRepository.UploadOutcome.Retry, repository.uploadOne(1L))
+            assertEquals("FAILED", message.status)
+            assertEquals(SmsRepository.UploadOutcome.Success, repository.uploadOne(1L))
+            assertEquals("SENT", message.status)
+        }
+    }
 }

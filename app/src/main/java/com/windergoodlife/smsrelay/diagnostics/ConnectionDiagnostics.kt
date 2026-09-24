@@ -16,7 +16,7 @@ import java.util.concurrent.CancellationException
 import javax.net.ssl.SSLException
 
 enum class ConnectionLogStage(val label: String) {
-    PERMISSION("SMS 권한"), PREPARING("연결 준비"), REGISTER("휴대폰 등록"),
+    PERMISSION("SMS 권한"), PREPARING("연결 준비"), REGISTER("휴대폰 등록"), AUTO_REGISTER("자동등록 확인"),
     PING("서버 응답 확인"), HEARTBEAT("연결 상태 전송"), COMPLETE("연결 결과")
 }
 

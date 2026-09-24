@@ -26,6 +26,8 @@ class DeviceTokenStore internal constructor(
 
     fun getDeviceToken(): String? = prefs?.getString(KEY_DEVICE_TOKEN, null)?.trim()
 
+    fun getConnectionGeneration(): Long = prefs?.getLong(KEY_CONNECTION_GENERATION, 0L) ?: 0L
+
     /** Save the same installation identity before a request so an uncertain retry cannot rotate it. */
     @Synchronized
     fun prepareConnection(baseUrl: String, displayName: String): ConnectionIdentity {
@@ -62,10 +64,32 @@ class DeviceTokenStore internal constructor(
     }
 
     @Synchronized
+    fun recoverUnregisteredIdentity(identity: ConnectionIdentity): ConnectionIdentity {
+        val secure = requireSecurePreferences()
+        check(getDeviceId() == identity.deviceId && getDeviceToken() == identity.token) {
+            "연결 정보가 변경되었습니다. 다시 연결해 주세요"
+        }
+        // Called only after the server positively attests that this identity has no registry row.
+        // Current-format pairs are retained; old manual identities receive one persisted candidate.
+        val candidate = if (identity.canEnrollAutomatically())
+            ConnectionIdentity(identity.deviceId, identity.token, identity.displayName, true)
+        else ConnectionIdentity(UUID.randomUUID().toString(),
+            "frt_" + Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32).also { SecureRandom().nextBytes(it) }),
+            identity.displayName.take(120), true)
+        val editor = secure.edit().putString(KEY_DEVICE_ID, candidate.deviceId)
+            .putString(KEY_DEVICE_TOKEN, candidate.token).putString(KEY_DISPLAY_NAME, candidate.displayName)
+            .putBoolean(KEY_CONNECTED, false)
+        if (secure.getLong(KEY_LAST_SYNC, 0L) <= 0L) editor.putLong(KEY_LAST_SYNC, now())
+        check(editor.commit()) { "연결 상태를 저장하지 못했습니다" }
+        return candidate
+    }
+
+    @Synchronized
     fun confirmConnection(deviceId: String) {
         val secure = requireSecurePreferences()
         check(getDeviceId() == deviceId) { "연결 정보가 변경되었습니다. 다시 연결해 주세요" }
-        check(secure.edit().putBoolean(KEY_CONNECTED, true).commit()) { "연결 상태를 저장하지 못했습니다" }
+        check(secure.edit().putBoolean(KEY_CONNECTED, true)
+            .putLong(KEY_CONNECTION_GENERATION, getConnectionGeneration() + 1).commit()) { "연결 상태를 저장하지 못했습니다" }
     }
 
     @Synchronized
@@ -112,6 +136,7 @@ class DeviceTokenStore internal constructor(
         private const val KEY_DEVICE_TOKEN = "device_token"
         private const val KEY_LAST_SYNC = "last_sync_time"
         private const val KEY_CONNECTED = "connection_confirmed"
+        private const val KEY_CONNECTION_GENERATION = "connection_generation"
         private const val KEY_DISPLAY_NAME = "display_name"
 
         private fun openSecurePreferences(context: Context): SharedPreferences? = try {
@@ -153,5 +178,15 @@ class DeviceTokenStore internal constructor(
         val token: String,
         val displayName: String,
         val needsEnrollment: Boolean
-    )
+    ) {
+        fun canEnrollAutomatically(): Boolean {
+            if (!deviceId.matches(Regex("[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"))) return false
+            if (!token.matches(Regex("frt_[A-Za-z0-9_-]{43}"))) return false
+            val encoded = token.substring(4)
+            return runCatching {
+                val raw = Base64.getUrlDecoder().decode(encoded)
+                raw.size == 32 && Base64.getUrlEncoder().withoutPadding().encodeToString(raw) == encoded
+            }.getOrDefault(false)
+        }
+    }
 }

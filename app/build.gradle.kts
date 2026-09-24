@@ -21,8 +21,8 @@ android {
         applicationId = "com.windergoodlife.smsrelay"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "1.0.4"
+        versionCode = 6
+        versionName = "1.0.5"
         buildConfigField("String", "DEFAULT_BASE_URL", "\"https://api.dealerhub.co.kr\"")
     }
 

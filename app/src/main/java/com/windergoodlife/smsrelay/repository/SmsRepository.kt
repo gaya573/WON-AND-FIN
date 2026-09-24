@@ -64,6 +64,7 @@ class SmsRepository(
             return UploadOutcome.Retry
         }
 
+        val connectionGeneration = tokenStore.getConnectionGeneration()
         val token = tokenStore.getDeviceToken().orEmpty()
         val deviceId = tokenStore.getDeviceId().orEmpty()
         val now = System.currentTimeMillis()
@@ -122,19 +123,23 @@ class SmsRepository(
                     }
                 }
                 code == 401 || code == 403 -> {
-                    // A login may finish while an old-token request is still in flight.
-                    // Keep that row retryable instead of stranding it after the recovery reset.
-                    val tokenWasRenewed = tokenStore.getDeviceToken() != token
+                    // Recovery may retain the token while an old request is still in flight.
+                    fun connectionChanged() = tokenStore.getDeviceToken() != token ||
+                        tokenStore.getConnectionGeneration() != connectionGeneration
+                    val recovered = connectionChanged()
                     dao.updateUploadResult(
                         id = entity.id,
-                        status = if (tokenWasRenewed) SmsStatus.FAILED.name else SmsStatus.ERROR_AUTH.name,
+                        status = if (recovered) SmsStatus.FAILED.name else SmsStatus.ERROR_AUTH.name,
                         retryCount = entity.retryCount + 1,
                         lastAttemptAt = System.currentTimeMillis(),
                         serverMessageId = null,
                         httpLastStatus = code
                     )
-                    Log.e(TAG, "authentication rejected id=${entity.id} http=$code renewed=$tokenWasRenewed")
-                    if (tokenWasRenewed) UploadOutcome.Retry else UploadOutcome.AuthError
+                    // Cover confirmation occurring between the check and the database write.
+                    val retry = recovered || connectionChanged()
+                    if (retry && !recovered) dao.retryAuthenticationFailure(entity.id)
+                    Log.e(TAG, "authentication rejected id=${entity.id} http=$code recovered=$retry")
+                    if (retry) UploadOutcome.Retry else UploadOutcome.AuthError
                 }
                 code == 400 -> {
                     dao.updateUploadResult(
