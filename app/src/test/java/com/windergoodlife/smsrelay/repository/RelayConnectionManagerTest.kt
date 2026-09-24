@@ -3,6 +3,7 @@ package com.windergoodlife.smsrelay.repository
 import com.windergoodlife.smsrelay.network.SmsApi
 import com.windergoodlife.smsrelay.network.dto.*
 import com.windergoodlife.smsrelay.security.DeviceTokenStore
+import com.windergoodlife.smsrelay.diagnostics.*
 import kotlinx.coroutines.runBlocking
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.jupiter.api.Assertions.*
@@ -16,7 +17,8 @@ class RelayConnectionManagerTest {
     private val store = mock(DeviceTokenStore::class.java)
     private val api = mock(SmsApi::class.java)
     private val identity = DeviceTokenStore.ConnectionIdentity("5e0b22c9-4ea3-45ec-ae3f-51e1b479105d", "frt_" + "a".repeat(43), "Test phone", true)
-    private val manager = RelayConnectionManager(store) { api }
+    private val events = mutableListOf<ConnectionDiagnostic>()
+    private val manager = RelayConnectionManager(store, ConnectionLogSink { events += it }) { api }
     private fun request() = any(RelayConnectRequest::class.java) ?: RelayConnectRequest("", "")
     private fun heartbeat() = any(HeartbeatRequest::class.java) ?: HeartbeatRequest("", "", 0, 0, true, false)
 
@@ -39,6 +41,9 @@ class RelayConnectionManagerTest {
         order.verify(api).ping("Bearer ${identity.token}", identity.token, identity.deviceId)
         order.verify(api).heartbeat(anyString(), anyString(), heartbeat(), anyString())
         order.verify(store).confirmConnection(identity.deviceId)
+        assertEquals(listOf(ConnectionLogStage.PREPARING, ConnectionLogStage.REGISTER, ConnectionLogStage.PING, ConnectionLogStage.HEARTBEAT),
+            events.filter { it.outcome == ConnectionLogOutcome.SUCCEEDED }.map { it.stage })
+        assertEquals(ConnectionDiagnostic(ConnectionLogStage.COMPLETE, ConnectionLogOutcome.STARTED), events.last())
     }
 
     @Test fun `legacy valid phone verifies without reenrollment`() = runBlocking<Unit> {
@@ -84,6 +89,8 @@ class RelayConnectionManagerTest {
         val progress = mutableListOf<ConnectionProgress>()
         try { manager.connect("Test phone", true, false) { progress += it }; fail("must fail") } catch (_: IllegalStateException) { }
         assertEquals(ConnectionProgress.REPORTING_STATUS, progress.last())
+        assertEquals(ConnectionDiagnostic(ConnectionLogStage.HEARTBEAT, ConnectionLogOutcome.FAILED, 200, ConnectionFailureReason.INVALID_ACK), events.last())
+        assertFalse(events.any { it.stage == ConnectionLogStage.HEARTBEAT && it.outcome == ConnectionLogOutcome.SUCCEEDED })
         verify(store, never()).confirmConnection(anyString())
     }
 
@@ -105,5 +112,48 @@ class RelayConnectionManagerTest {
         try { manager.connect("Test phone", true, false); fail("must fail") } catch (_: IllegalStateException) { }
         verify(store, never()).confirmConnection(anyString())
         verify(api, never()).ping(anyString(), anyString(), anyString())
+    }
+
+    @Test fun `404 is recorded at the exact failed API stage without response data`() = runBlocking<Unit> {
+        for (stage in listOf(ConnectionLogStage.REGISTER, ConnectionLogStage.PING, ConnectionLogStage.HEARTBEAT)) {
+            reset(api, store)
+            events.clear()
+            ready()
+            val body = "private-token sender SMS-body".toResponseBody()
+            when (stage) {
+                ConnectionLogStage.REGISTER -> `when`(api.connect(anyString(), request())).thenReturn(Response.error(404, body))
+                ConnectionLogStage.PING -> `when`(api.ping(anyString(), anyString(), anyString())).thenReturn(Response.error(404, body))
+                else -> `when`(api.heartbeat(anyString(), anyString(), heartbeat(), anyString())).thenReturn(Response.error(404, body))
+            }
+            try { manager.connect("Test phone", true, false); fail("must fail") } catch (_: RelayConnectionException) { }
+            assertEquals(ConnectionDiagnostic(stage, ConnectionLogOutcome.FAILED, 404, ConnectionFailureReason.SERVER_RESPONSE), events.last())
+            assertFalse(events.toString().contains("private-token"))
+            assertFalse(events.toString().contains(identity.deviceId))
+            assertFalse(events.any { it.stage == stage && it.outcome == ConnectionLogOutcome.SUCCEEDED })
+            verify(store, never()).confirmConnection(anyString())
+        }
+    }
+
+    @Test fun `local credential setup failure is recorded before network requests`() = runBlocking<Unit> {
+        `when`(store.prepareConnection(anyString(), anyString())).thenThrow(IllegalStateException("private credential"))
+        try { manager.connect("Test phone", true, false); fail("must fail") } catch (_: IllegalStateException) { }
+        assertEquals(ConnectionDiagnostic(ConnectionLogStage.PREPARING, ConnectionLogOutcome.FAILED, reason = ConnectionFailureReason.LOCAL_SETUP), events.last())
+        assertFalse(events.toString().contains("private credential"))
+        verifyNoInteractions(api)
+    }
+
+    @Test fun `local confirmation failure is not logged as a completed connection`() = runBlocking<Unit> {
+        ready()
+        doThrow(IllegalStateException("private credential")).`when`(store).confirmConnection(identity.deviceId)
+        try { manager.connect("Test phone", true, false); fail("must fail") } catch (_: IllegalStateException) { }
+        assertEquals(ConnectionDiagnostic(ConnectionLogStage.COMPLETE, ConnectionLogOutcome.FAILED, reason = ConnectionFailureReason.LOCAL_SETUP), events.last())
+        assertFalse(events.any { it.stage == ConnectionLogStage.COMPLETE && it.outcome == ConnectionLogOutcome.SUCCEEDED })
+    }
+
+    @Test fun `diagnostic sink failure never changes authentication success`() = runBlocking<Unit> {
+        ready()
+        RelayConnectionManager(store, ConnectionLogSink { throw IllegalStateException("storage unavailable") }) { api }
+            .connect("Test phone", true, false)
+        verify(store).confirmConnection(identity.deviceId)
     }
 }

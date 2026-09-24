@@ -14,12 +14,11 @@ import androidx.lifecycle.asLiveData
 import androidx.lifecycle.viewModelScope
 import com.windergoodlife.smsrelay.SmsRelayApp
 import com.windergoodlife.smsrelay.data.SmsEntity
-import com.windergoodlife.smsrelay.repository.RelayConnectionException
 import com.windergoodlife.smsrelay.repository.RelayConnectionManager
+import com.windergoodlife.smsrelay.diagnostics.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -48,6 +47,8 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun awaitingPermission() {
+        if (status.display.status != ConnectionStatus.PERMISSION)
+            app.connectionLogs.record(ConnectionDiagnostic(ConnectionLogStage.PERMISSION, ConnectionLogOutcome.WAITING))
         status.awaitingPermission()
         _display.value = status.display
     }
@@ -55,6 +56,8 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
     fun shouldAutoConnect(): Boolean = status.shouldAutoConnect()
 
     fun permissionDeclined(settingsRequired: Boolean) {
+        app.connectionLogs.record(ConnectionDiagnostic(ConnectionLogStage.PERMISSION, ConnectionLogOutcome.FAILED,
+            reason = if (settingsRequired) ConnectionFailureReason.SETTINGS_REQUIRED else ConnectionFailureReason.PERMISSION_DENIED))
         status.failed(if (settingsRequired) "권한 요청이 차단되어 있습니다. 환경설정에서 SMS 권한을 허용해 주세요"
             else "문자를 전달하려면 SMS 권한이 필요합니다. 연결을 눌러 다시 허용해 주세요")
         _display.value = status.display
@@ -64,11 +67,12 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
         if (!hasSmsPermission()) { permissionDeclined(false); return }
         if (!status.startConnection()) return
         _display.value = status.display
+        app.connectionLogs.record(ConnectionDiagnostic(ConnectionLogStage.PERMISSION, ConnectionLogOutcome.SUCCEEDED))
         viewModelScope.launch {
             val result = runCatching {
                 withContext(Dispatchers.IO) {
                     val health = app.repository.connectionHealth()
-                    RelayConnectionManager(app.tokenStore).connect(
+                    RelayConnectionManager(app.tokenStore, app.connectionLogs).connect(
                         "${Build.MANUFACTURER} ${Build.MODEL}".trim().take(120),
                         hasSmsPermission(), isBatteryUnrestricted(), health.first, health.second, health.third
                     ) { progress ->
@@ -84,22 +88,14 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
                 check(app.startRelayIfReady()) { "SMS 권한을 확인한 뒤 다시 연결해 주세요" }
             }
             result.onSuccess {
+                app.connectionLogs.record(ConnectionDiagnostic(ConnectionLogStage.COMPLETE, ConnectionLogOutcome.SUCCEEDED))
                 status.connected()
                 _display.value = status.display
                 // Recover only messages after the original consent/connection checkpoint.
                 withContext(Dispatchers.IO) { runCatching { app.inboxSync.syncFromLastCheckpoint() } }
             }.onFailure {
-                val detail = when {
-                    it is RelayConnectionException && it.code == 401 -> "저장된 연결 정보를 사용할 수 없습니다. 관리자에게 이 휴대폰의 연결 상태를 확인해 주세요"
-                    it is RelayConnectionException && it.code == 403 -> "사용 중지된 휴대폰입니다. 관리자에게 연결 상태를 확인해 주세요"
-                    it is RelayConnectionException && it.code == 429 -> "연결 요청이 많습니다. 잠시 후 다시 연결해 주세요"
-                    it is RelayConnectionException && it.code == 400 -> "휴대폰 정보를 확인하지 못했습니다. 앱을 다시 실행한 뒤 연결해 주세요"
-                    it is RelayConnectionException -> "서버에 연결하지 못했습니다. 잠시 후 다시 연결해 주세요"
-                    it is IOException -> "인터넷 연결을 확인한 뒤 다시 연결해 주세요"
-                    it is IllegalStateException -> it.message ?: "연결 상태를 확인한 뒤 다시 연결해 주세요"
-                    else -> "연결하지 못했습니다. 앱을 다시 실행한 뒤 연결해 주세요"
-                }
-                status.failed(detail)
+                app.connectionLogs.record(connectionFailure(ConnectionLogStage.COMPLETE, it))
+                status.failed(connectionFailureMessage(it))
                 _display.value = status.display
             }
         }

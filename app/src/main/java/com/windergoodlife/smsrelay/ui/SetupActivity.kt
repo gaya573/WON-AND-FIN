@@ -1,6 +1,8 @@
 package com.windergoodlife.smsrelay.ui
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -12,7 +14,14 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import com.windergoodlife.smsrelay.BuildConfig
+import com.windergoodlife.smsrelay.SmsRelayApp
+import com.windergoodlife.smsrelay.diagnostics.ConnectionLogFormatter
 import com.windergoodlife.smsrelay.databinding.ActivitySetupBinding
+import kotlinx.coroutines.launch
 
 /** Only Android consent/settings live here. Connection credentials are managed by the app. */
 class SetupActivity : AppCompatActivity() {
@@ -46,6 +55,21 @@ class SetupActivity : AppCompatActivity() {
         }
         binding.btnAppPermissions.setOnClickListener {
             openSettings(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).setData(Uri.parse("package:$packageName")))
+        }
+        binding.logsDescription.text = "앱 ${BuildConfig.VERSION_NAME} · 최근 6건 표시 · 최대 50건 보관\n복사하면 보관된 로그 전체를 확인할 수 있습니다."
+        val logs = (application as SmsRelayApp).connectionLogs
+        binding.btnCopyLogs.setOnClickListener {
+            val text = "SMS Relay ${BuildConfig.VERSION_NAME}\n" + ConnectionLogFormatter.format(logs.entries.value)
+            (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("최근 연결 로그", text))
+            Toast.makeText(this, "연결 로그를 복사했습니다", Toast.LENGTH_SHORT).show()
+        }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                logs.entries.collect { entries ->
+                    binding.connectionLogs.text = ConnectionLogFormatter.format(entries.takeLast(6))
+                    binding.btnCopyLogs.isEnabled = entries.isNotEmpty()
+                }
+            }
         }
     }
 
