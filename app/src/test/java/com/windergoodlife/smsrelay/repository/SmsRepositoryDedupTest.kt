@@ -26,6 +26,7 @@ class SmsRepositoryDedupTest {
         val context = mock(Context::class.java)
         val rows = linkedMapOf<Long, SmsEntity>()
         val requests = mutableListOf<Pair<String, SmsIngestRequest>>()
+        val enqueued = mutableListOf<Long>()
         var respond: suspend () -> Response<SmsAckResponse> = {
             Response.success(SmsAckResponse(true, "synthetic-server-id"))
         }
@@ -47,6 +48,7 @@ class SmsRepositoryDedupTest {
 
         suspend fun configureDao() {
             `when`(dao.findById(anyLong())).thenAnswer { rows[it.getArgument<Long>(0)] }
+            `when`(dao.findByUniqueKey(anyString())).thenAnswer { call -> rows.values.find { it.uniqueKey == call.getArgument<String>(0) } }
             `when`(dao.findRetryable(anyInt())).thenAnswer { call ->
                 rows.values.filter { it.status in listOf("PENDING", "FAILED", "SENDING") }
                     .take(call.getArgument<Int>(0))
@@ -76,7 +78,8 @@ class SmsRepositoryDedupTest {
             }
         }
 
-        fun repository() = SmsRepository(context, dao, api, store)
+        fun repository(enqueue: suspend (Long) -> Unit = enqueued::add) =
+            SmsRepository(context, dao, api, store, enqueueUpload = enqueue)
 
         fun row(status: String = "PENDING") = SmsEntity(
             1L, SmsKeys.uniqueKey("010-0000-0000", "synthetic message", 12_345L),
@@ -156,5 +159,102 @@ class SmsRepositoryDedupTest {
         assertEquals("SENT", fixture.rows[1L]?.status)
         repository.uploadOne(1L)
         assertEquals(2, fixture.requests.size)
+    }
+
+    @Test fun `provider receive time and broadcast sent time share one row in either arrival order`() = runBlocking<Unit> {
+        for (providerFirst in listOf(false, true)) {
+            val fixture = Fixture()
+            fixture.configureDao()
+            val repository = fixture.repository()
+            val saveProvider: suspend () -> Unit = { repository.saveProviderMessage("01000000000", "synthetic message", 18_345L, 12_345L, true) }
+            val receive: suspend () -> Unit = { repository.saveIncoming("01000000000", "synthetic message", 12_345L) }
+            if (providerFirst) { saveProvider(); receive() } else { receive(); saveProvider() }
+            assertEquals(1, fixture.rows.size)
+            val saved = fixture.rows.values.single()
+            assertEquals(SmsKeys.canonicalKey("01000000000", "synthetic message", 12_345L), saved.uniqueKey)
+            assertEquals(if (providerFirst) 18_345L else 12_345L, saved.receivedAt)
+            assertEquals(listOf(saved.id, saved.id), fixture.enqueued)
+            repository.uploadOne(saved.id)
+            repository.uploadOne(saved.id)
+            assertEquals(1, fixture.requests.size)
+        }
+    }
+
+    @Test fun `provider and receiver racing during queue persistence still share the original row`() = runBlocking<Unit> {
+        val fixture = Fixture()
+        fixture.configureDao()
+        val queued = CompletableDeferred<Unit>()
+        val repository = fixture.repository { id -> fixture.enqueued += id; queued.await() }
+        val provider = async(start = CoroutineStart.UNDISPATCHED) {
+            repository.saveProviderMessage("01000000000", "synthetic message", 18_345L, 12_345L, true)
+        }
+        val receiver = async(start = CoroutineStart.UNDISPATCHED) {
+            repository.saveIncoming("01000000000", "synthetic message", 12_345L)
+        }
+        assertEquals(1, fixture.rows.size)
+        assertEquals(listOf(1L, 1L), fixture.enqueued)
+        queued.complete(Unit)
+        assertEquals(1L, provider.await())
+        assertNull(receiver.await())
+    }
+
+    @Test fun `legacy provider SENT key and acknowledgement survive the timestamp upgrade`() = runBlocking<Unit> {
+        val fixture = Fixture()
+        fixture.configureDao()
+        val original = fixture.row("SENT").copy(
+            uniqueKey = SmsKeys.uniqueKey("01000000000", "synthetic message", 18_345L),
+            receivedAt = 18_345L, serverMessageId = "old-ack", httpLastStatus = 200)
+        fixture.rows[1L] = original
+        assertNull(fixture.repository().saveProviderMessage("01000000000", "synthetic message", 18_345L, 12_345L, true))
+        assertEquals(mapOf(1L to original), fixture.rows)
+        assertTrue(fixture.enqueued.isEmpty())
+        assertTrue(fixture.requests.isEmpty())
+    }
+
+    @Test fun `same body with overlapping receive and sent times remains two distinct new messages`() = runBlocking<Unit> {
+        val fixture = Fixture()
+        fixture.configureDao()
+        val repository = fixture.repository()
+        // The second message arrives first; its service-centre time equals the first one's DATE.
+        repository.saveIncoming("01000000000", "synthetic message", 18_345L)
+        repository.saveProviderMessage("01000000000", "synthetic message", 18_345L, 12_345L, true)
+        repository.saveProviderMessage("01000000000", "synthetic message", 24_345L, 18_345L, true)
+        assertEquals(2, fixture.rows.size)
+        assertEquals(setOf(SmsKeys.canonicalKey("01000000000", "synthetic message", 12_345L),
+            SmsKeys.canonicalKey("01000000000", "synthetic message", 18_345L)), fixture.rows.values.map { it.uniqueKey }.toSet())
+    }
+
+    @Test fun `provider without sent time keeps its legacy receive time key`() = runBlocking<Unit> {
+        val fixture = Fixture()
+        fixture.configureDao()
+        val repository = fixture.repository()
+        repository.saveProviderMessage("01000000000", "synthetic message", 18_345L, 0L, true)
+        repository.saveProviderMessage("01000000000", "synthetic message", 18_345L, 0L, true)
+        assertEquals(1, fixture.rows.size)
+        assertEquals(SmsKeys.uniqueKey("01000000000", "synthetic message", 18_345L), fixture.rows.values.single().uniqueKey)
+    }
+
+    @Test fun `provider without sent time and matching broadcast timestamp deduplicate in either order`() = runBlocking<Unit> {
+        for (providerFirst in listOf(false, true)) {
+            val fixture = Fixture()
+            fixture.configureDao()
+            val repository = fixture.repository()
+            val provider: suspend () -> Unit = {
+                repository.saveProviderMessage("01000000000", "synthetic message", 12_345L, 0L, true)
+            }
+            val receiver: suspend () -> Unit = {
+                repository.saveIncoming("01000000000", "synthetic message", 12_345L)
+            }
+            if (providerFirst) { provider(); receiver() } else { receiver(); provider() }
+            assertEquals(1, fixture.rows.size)
+            val original = fixture.rows.values.single()
+            repository.uploadOne(original.id)
+            provider()
+            receiver()
+            repository.uploadOne(original.id)
+            assertEquals(1, fixture.requests.size)
+            assertEquals(original.uniqueKey, fixture.rows.values.single().uniqueKey)
+            assertEquals("SENT", fixture.rows.values.single().status)
+        }
     }
 }

@@ -62,13 +62,18 @@ class PendingSmsWorker(
     companion object {
         private const val UNIQUE = "pending-sms-flush"
 
-        fun enqueue(context: Context) {
+        fun enqueue(context: Context, connectionConfirmed: Boolean = false,
+            manager: WorkManager = WorkManager.getInstance(context)) {
             // Preserve a connect/network wake even if the running worker has already decided to
             // stop (e.g. an old authentication failure). WorkManager serializes this chain.
-            schedule(context, ExistingWorkPolicy.APPEND_OR_REPLACE)
+            // Only a successfully verified manual connection resets a stale failure backoff.
+            // Normal start/network/heartbeat wakes and page continuations keep their follow-ups.
+            schedule(context, if (connectionConfirmed) ExistingWorkPolicy.REPLACE
+                else ExistingWorkPolicy.APPEND_OR_REPLACE, manager)
         }
 
-        internal fun schedule(context: Context, policy: ExistingWorkPolicy): androidx.work.Operation {
+        internal fun schedule(context: Context, policy: ExistingWorkPolicy,
+            manager: WorkManager = WorkManager.getInstance(context)): androidx.work.Operation {
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)
                 .build()
@@ -80,7 +85,7 @@ class PendingSmsWorker(
                         setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 }
                 .build()
-            return WorkManager.getInstance(context).enqueueUniqueWork(
+            return manager.enqueueUniqueWork(
                 UNIQUE,
                 policy,
                 request

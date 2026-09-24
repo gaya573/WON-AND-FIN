@@ -36,7 +36,7 @@ class SmsUploadWorker(
         private const val KEY_LOCAL_ID = "local_id"
         private const val UNIQUE_PREFIX = "sms-upload-"
 
-        fun enqueue(context: Context, localId: Long) {
+        fun enqueue(context: Context, localId: Long): androidx.work.Operation {
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)
                 .build()
@@ -52,7 +52,7 @@ class SmsUploadWorker(
                         setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 }
                 .build()
-            WorkManager.getInstance(context).enqueueUniqueWork(
+            return WorkManager.getInstance(context).enqueueUniqueWork(
                 UNIQUE_PREFIX + localId,
                 ExistingWorkPolicy.KEEP,
                 request

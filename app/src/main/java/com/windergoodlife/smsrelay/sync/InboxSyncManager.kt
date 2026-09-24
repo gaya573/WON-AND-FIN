@@ -41,7 +41,7 @@ class InboxSyncManager(
         if (snapshotEnd <= lastSyncExclusiveMs) return 0
         var inserted = 0
         val uri = Uri.parse("content://sms/inbox")
-        val projection = arrayOf("_id", "address", "body", "date")
+        val projection = arrayOf("_id", "address", "body", "date", "date_sent")
         val selection = "date > ? AND date <= ?"
         val args = arrayOf(lastSyncExclusiveMs.toString(), snapshotEnd.toString())
         val cursor: Cursor? = try {
@@ -54,12 +54,13 @@ class InboxSyncManager(
             val idxAddress = c.getColumnIndex("address")
             val idxBody = c.getColumnIndex("body")
             val idxDate = c.getColumnIndex("date")
+            val idxSent = c.getColumnIndex("date_sent")
             while (c.moveToNext()) {
                 val sender = if (idxAddress >= 0) c.getString(idxAddress).orEmpty() else ""
                 val body = if (idxBody >= 0) c.getString(idxBody).orEmpty() else ""
                 val date = if (idxDate >= 0) c.getLong(idxDate) else snapshotEnd
                 if (body.isBlank()) continue
-                val id = repository.saveIncoming(sender, body, date)
+                val id = saveProvider(sender, body, date, if (idxSent >= 0) c.getLong(idxSent) else 0L, true)
                 if (id != null) {
                     inserted++
                     Log.i(TAG, "inbox insert")
@@ -82,7 +83,8 @@ class InboxSyncManager(
     data class RecoveryBatch(val inserted: Int, val scanned: Int, val hasMore: Boolean)
 
     /** Commit only a successfully persisted bounded page, keeping the first-consent time boundary. */
-    suspend fun recoverBatch(limit: Int = 250, deadlineNanos: Long = System.nanoTime() + 30_000_000_000L): RecoveryBatch = recoveryMutex.withLock {
+    suspend fun recoverBatch(limit: Int = 250, deadlineNanos: Long = System.nanoTime() + 30_000_000_000L,
+        enqueueCaptured: Boolean = false): RecoveryBatch = recoveryMutex.withLock {
         require(limit > 0)
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) !=
             PackageManager.PERMISSION_GRANTED
@@ -133,7 +135,7 @@ class InboxSyncManager(
             args = arrayOf(previousId.toString(), snapshotId.toString())
         }
         val cursor = try {
-            context.contentResolver.query(uri, arrayOf("_id", "address", "body", "date"), selection, args, "_id ASC")
+            context.contentResolver.query(uri, arrayOf("_id", "address", "body", "date", "date_sent"), selection, args, "_id ASC")
         } catch (_: SecurityException) {
             throw InboxRecoveryException(ConnectionFailureReason.PERMISSION_DENIED, false)
         } catch (_: Exception) {
@@ -149,6 +151,7 @@ class InboxSyncManager(
             val addressColumn = rows.getColumnIndex("address")
             val bodyColumn = rows.getColumnIndex("body")
             val dateColumn = rows.getColumnIndex("date")
+            val sentColumn = rows.getColumnIndex("date_sent")
             if (idColumn < 0 || addressColumn < 0 || bodyColumn < 0 || dateColumn < 0)
                 throw InboxRecoveryException(ConnectionFailureReason.PROVIDER_UNAVAILABLE, true)
             while (rows.moveToNext()) {
@@ -163,7 +166,8 @@ class InboxSyncManager(
                 val body = rows.getString(bodyColumn).orEmpty()
                 if (body.isNotBlank()) {
                     val sender = rows.getString(addressColumn).orEmpty()
-                    if (repository.saveRecovered(sender, body, rows.getLong(dateColumn)) != null) inserted++
+                    if (saveProvider(sender, body, rows.getLong(dateColumn),
+                            if (sentColumn >= 0) rows.getLong(sentColumn) else 0L, enqueueCaptured) != null) inserted++
                 }
                 scanned++
                 lastSavedId = rowId
@@ -176,6 +180,11 @@ class InboxSyncManager(
         Log.i(TAG, "inbox recovery inserted=$inserted")
         RecoveryBatch(inserted, scanned, hasMore || providerMaxId > snapshotId)
     }
+
+    private suspend fun saveProvider(sender: String, body: String, date: Long, sentAt: Long, enqueue: Boolean): Long? =
+        if (sentAt > 0L) repository.saveProviderMessage(sender, body, date, sentAt, enqueue)
+        else if (enqueue) repository.saveProviderMessage(sender, body, date, 0L, true)
+        else repository.saveRecovered(sender, body, date)
 
     companion object {
         private const val TAG = "SmsRelay"

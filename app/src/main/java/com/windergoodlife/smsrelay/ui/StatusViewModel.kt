@@ -87,7 +87,7 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
                     app.repository.refreshApi()
                     app.repository.recoverAuthenticationFailures()
                 }
-                check(app.startRelayIfReady()) { "SMS 권한을 확인한 뒤 다시 연결해 주세요" }
+                check(app.startRelayIfReady(connectionConfirmed = true)) { "SMS 권한을 확인한 뒤 다시 연결해 주세요" }
             }
             result.onSuccess {
                 app.connectionLogs.record(ConnectionDiagnostic(ConnectionLogStage.COMPLETE, ConnectionLogOutcome.SUCCEEDED))

@@ -45,9 +45,9 @@ class SmsRelayApp : Application() {
     fun hasSmsPermission(): Boolean = ContextCompat.checkSelfPermission(this, Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED
 
-    fun startRelayIfReady(): Boolean {
+    fun startRelayIfReady(connectionConfirmed: Boolean = false): Boolean {
         if (tokenStore.isConfigured() && hasSmsPermission()) {
-            PendingSmsWorker.enqueue(this)
+            PendingSmsWorker.enqueue(this, connectionConfirmed)
             HeartbeatWorker.enqueuePeriodic(this)
             RelayForegroundService.start(this)
             return true

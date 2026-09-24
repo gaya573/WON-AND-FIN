@@ -101,4 +101,21 @@ class ConnectionDiagnosticsTest {
         assertEquals(first.entries.value, restarted.entries.value)
         verify(editor, times(55)).apply()
     }
+
+    @Test fun `new SMS receive persistence and scheduling stages survive safe log copy`() {
+        val events = listOf(
+            ConnectionDiagnostic(ConnectionLogStage.SMS_RECEIVE, ConnectionLogOutcome.SUCCEEDED, count = 1),
+            ConnectionDiagnostic(ConnectionLogStage.LOCAL_STORE, ConnectionLogOutcome.ALREADY_STORED, count = 1),
+            ConnectionDiagnostic(ConnectionLogStage.UPLOAD_QUEUE, ConnectionLogOutcome.FAILED,
+                reason = ConnectionFailureReason.WORK_SCHEDULING, retryable = true)
+        )
+        val buffer = ConnectionLogBuffer()
+        events.forEachIndexed { index, event -> buffer.record(event, index + 1L) }
+        val restored = ConnectionLogBuffer(buffer.serialize())
+        assertEquals(events, restored.snapshot().map { it.event })
+        val text = ConnectionLogFormatter.format(restored.snapshot())
+        assertTrue(text.contains("새 문자 수신"))
+        assertTrue(text.contains("기존 저장 유지"))
+        assertTrue(text.contains("전송 작업 예약 실패"))
+    }
 }

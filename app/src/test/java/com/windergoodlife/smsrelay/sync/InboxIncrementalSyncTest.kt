@@ -13,7 +13,7 @@ import org.mockito.ArgumentMatchers.*
 import org.mockito.Mockito.*
 
 class InboxIncrementalSyncTest {
-    private data class Message(val id: Long, val date: Long)
+    private data class Message(val id: Long, val date: Long, val sentAt: Long = 0L)
     private class Fixture {
         val context = mock(Context::class.java)
         val resolver = mock(ContentResolver::class.java)
@@ -66,7 +66,11 @@ class InboxIncrementalSyncTest {
             `when`(cursor.moveToNext()).thenAnswer { ++index < messages.size }
             `when`(cursor.getColumnIndex(anyString())).thenAnswer { columns.indexOf(it.getArgument<String>(0)) }
             `when`(cursor.getLong(anyInt())).thenAnswer {
-                if (columns[it.getArgument<Int>(0)] == "_id") messages[index].id else messages[index].date
+                when (columns[it.getArgument<Int>(0)]) {
+                    "_id" -> messages[index].id
+                    "date_sent" -> messages[index].sentAt
+                    else -> messages[index].date
+                }
             }
             `when`(cursor.getString(anyInt())).thenAnswer {
                 if (columns[it.getArgument<Int>(0)] == "address") "synthetic sender" else "synthetic message ${messages[index].id}"
@@ -86,6 +90,21 @@ class InboxIncrementalSyncTest {
         fixture.now = 300L
         assertEquals(0, fixture.manager().syncFromLastCheckpoint())
         assertEquals(listOf("date >= ? AND _id <= ?" to listOf(100L, 2L)), fixture.queries)
+    }
+
+    @Test fun `observer captures one bounded page with separate received and sent timestamps`() = runBlocking<Unit> {
+        val fixture = Fixture()
+        fixture.setup()
+        fixture.inbox.clear()
+        fixture.inbox += Message(1L, 150L, 120L)
+        fixture.inbox += Message(2L, 160L, 125L)
+        `when`(fixture.repository.saveProviderMessage(anyString(), anyString(), anyLong(), anyLong(), eq(true))).thenReturn(1L)
+        val page = fixture.manager().recoverBatch(limit = 1, enqueueCaptured = true)
+        assertEquals(1, page.scanned)
+        assertTrue(page.hasMore)
+        assertEquals(1L, fixture.providerCursor)
+        verify(fixture.repository).saveProviderMessage("synthetic sender", "synthetic message 1", 150L, 120L, true)
+        verify(fixture.repository, never()).saveRecovered(anyString(), anyString(), anyLong())
     }
 
     @Test fun `equal timestamps and late inserted messages are recovered by provider id`() = runBlocking<Unit> {

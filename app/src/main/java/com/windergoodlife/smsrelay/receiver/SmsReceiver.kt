@@ -6,6 +6,7 @@ import android.content.Intent
 import android.provider.Telephony
 import android.util.Log
 import com.windergoodlife.smsrelay.SmsRelayApp
+import com.windergoodlife.smsrelay.diagnostics.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -18,8 +19,12 @@ class SmsReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent?.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
         val pending = goAsync()
-        val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
+        val logs = SmsRelayApp.get().connectionLogs
+        logs.record(ConnectionDiagnostic(ConnectionLogStage.SMS_RECEIVE, ConnectionLogOutcome.STARTED))
+        val messages = try { Telephony.Sms.Intents.getMessagesFromIntent(intent) } catch (_: Exception) { null }
         if (messages.isNullOrEmpty()) {
+            logs.record(ConnectionDiagnostic(ConnectionLogStage.SMS_RECEIVE, ConnectionLogOutcome.FAILED,
+                reason = ConnectionFailureReason.SMS_DECODE, retryable = false))
             pending.finish()
             return
         }
@@ -37,6 +42,9 @@ class SmsReceiver : BroadcastReceiver() {
                 existing.first.append(body)
             }
         }
+
+        logs.record(ConnectionDiagnostic(ConnectionLogStage.SMS_RECEIVE, ConnectionLogOutcome.SUCCEEDED,
+            count = bySender.size))
 
         CoroutineScope(Dispatchers.IO).launch {
             try {

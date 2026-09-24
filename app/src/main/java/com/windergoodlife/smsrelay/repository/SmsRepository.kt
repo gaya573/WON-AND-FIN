@@ -15,8 +15,10 @@ import com.windergoodlife.smsrelay.util.SmsKeys
 import com.windergoodlife.smsrelay.diagnostics.*
 import com.windergoodlife.smsrelay.worker.SmsUploadWorker
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.time.Instant
@@ -28,7 +30,10 @@ class SmsRepository(
     private val dao: SmsDao,
     private var api: SmsApi,
     private val tokenStore: DeviceTokenStore,
-    private val diagnostics: ConnectionLogSink = ConnectionLogSink { }
+    private val diagnostics: ConnectionLogSink = ConnectionLogSink { },
+    private val enqueueUpload: suspend (Long) -> Unit = { id ->
+        runInterruptible(Dispatchers.IO) { SmsUploadWorker.enqueue(context, id).result.get(); Unit }
+    }
 ) {
     // Both the individual worker and backlog worker use the application repository.
     // Hold this through the acknowledgement write so a second worker sees SENT.
@@ -47,28 +52,71 @@ class SmsRepository(
 
     /** Recovery owns the bounded queue drain; do not create one worker per historical message. */
     suspend fun saveRecovered(sender: String, message: String, receivedAtMs: Long): Long? =
-        save(sender, message, receivedAtMs, enqueue = false)
+        save(sender, message, receivedAtMs, enqueue = false, knownSentTime = false)
 
-    private suspend fun save(sender: String, message: String, receivedAtMs: Long, enqueue: Boolean): Long? {
-        val key = SmsKeys.uniqueKey(sender, message, receivedAtMs)
+    /** DATE_SENT matches the broadcast's service-centre timestamp; DATE remains display time. */
+    suspend fun saveProviderMessage(sender: String, message: String, receivedAtMs: Long,
+        sentAtMs: Long, enqueue: Boolean): Long? =
+        save(sender, message, receivedAtMs, enqueue, sentAtMs.takeIf { it > 0L } ?: receivedAtMs,
+            legacyTimestamp = receivedAtMs, knownSentTime = sentAtMs > 0L)
+
+    private suspend fun save(sender: String, message: String, receivedAtMs: Long, enqueue: Boolean,
+        identityTimestamp: Long = receivedAtMs, legacyTimestamp: Long = receivedAtMs,
+        knownSentTime: Boolean = true): Long? {
+        val canonicalKey = if (knownSentTime) SmsKeys.canonicalKey(sender, message, identityTimestamp)
+            else SmsKeys.uniqueKey(sender, message, receivedAtMs)
         val entity = SmsEntity(
-            uniqueKey = key,
+            uniqueKey = canonicalKey,
             sender = sender,
             message = message,
             receivedAt = receivedAtMs,
             status = SmsStatus.PENDING.name
         )
-        val rowId = dao.insertIgnore(entity)
-        if (rowId == -1L) {
-            Log.i(TAG, "duplicate incoming message ignored")
-            return null
+        var stage = ConnectionLogStage.LOCAL_STORE
+        if (enqueue) diagnostic(ConnectionDiagnostic(stage, ConnectionLogOutcome.STARTED))
+        return try {
+            // Previous app versions used the provider's receive time. Never rewrite their keys
+            // or SENT acknowledgements. New rows use the same timestamp as SMS_RECEIVED.
+            val legacyKey = SmsKeys.uniqueKey(sender, message, legacyTimestamp)
+            val priorBroadcastKey = SmsKeys.uniqueKey(sender, message, identityTimestamp)
+            val legacy = dao.findByUniqueKey(legacyKey)
+                ?: (if (priorBroadcastKey != legacyKey && priorBroadcastKey != canonicalKey)
+                    dao.findByUniqueKey(priorBroadcastKey) else null)
+            // A provider without DATE_SENT can still match an already received broadcast when
+            // its exact timestamp bucket agrees. Never widen this to a body/time-window match.
+            val exactBroadcast = if (!knownSentTime)
+                dao.findByUniqueKey(SmsKeys.canonicalKey(sender, message, receivedAtMs)) else null
+            val key = legacy?.uniqueKey ?: exactBroadcast?.uniqueKey ?: canonicalKey
+            val rowId = dao.insertIgnore(entity.copy(uniqueKey = key))
+            val existing = if (rowId <= 0L) dao.findByUniqueKey(key) else null
+            val inserted = rowId != -1L
+            val localId = if (rowId > 0L) rowId else existing?.id
+            if (enqueue) diagnostic(ConnectionDiagnostic(stage,
+                if (inserted) ConnectionLogOutcome.SUCCEEDED else ConnectionLogOutcome.ALREADY_STORED,
+                count = if (localId != null) 1 else 0))
+            // Recovery can win the Room insert before this receiver. Preserve the original row
+            // and key, but still give its unsent message an independent immediate upload wake.
+            val retryable = inserted || existing?.status in listOf("PENDING", "FAILED", "SENDING")
+            if (enqueue && retryable && localId != null && localId > 0L) {
+                stage = ConnectionLogStage.UPLOAD_QUEUE
+                if (tokenStore.isConfigured()) {
+                    diagnostic(ConnectionDiagnostic(stage, ConnectionLogOutcome.STARTED, count = 1))
+                    enqueueUpload(localId)
+                    diagnostic(ConnectionDiagnostic(stage, ConnectionLogOutcome.SUCCEEDED, count = 1))
+                } else {
+                    diagnostic(ConnectionDiagnostic(stage, ConnectionLogOutcome.WAITING,
+                        reason = ConnectionFailureReason.CONNECTION_REQUIRED, count = 1, retryable = true))
+                }
+            }
+            if (inserted) localId else null
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            if (enqueue) diagnostic(ConnectionDiagnostic(stage, ConnectionLogOutcome.FAILED,
+                reason = if (stage == ConnectionLogStage.UPLOAD_QUEUE) ConnectionFailureReason.WORK_SCHEDULING
+                    else ConnectionFailureReason.LOCAL_STORAGE, retryable = true))
+            throw failure
         }
-        val localId = if (rowId > 0L) rowId else dao.findByUniqueKey(key)?.id
-        Log.i(TAG, "saved id=$localId status=PENDING")
-        if (enqueue && localId != null && localId > 0L && tokenStore.isConfigured()) {
-            SmsUploadWorker.enqueue(context, localId)
-        }
-        return localId
     }
 
     suspend fun uploadOne(localId: Long): UploadOutcome = uploadMutex.withLock {

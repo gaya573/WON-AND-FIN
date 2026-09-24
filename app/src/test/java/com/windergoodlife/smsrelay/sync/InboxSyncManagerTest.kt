@@ -36,6 +36,7 @@ class InboxSyncManagerTest {
             `when`(cursor.getColumnIndex("address")).thenReturn(0)
             `when`(cursor.getColumnIndex("body")).thenReturn(1)
             `when`(cursor.getColumnIndex("date")).thenReturn(2)
+            `when`(cursor.getColumnIndex("date_sent")).thenReturn(-1)
             `when`(cursor.getString(0)).thenReturn("synthetic-sender")
             `when`(cursor.getString(1)).thenReturn("synthetic-message")
             `when`(cursor.getLong(2)).thenAnswer { snapshot[index] }
@@ -45,7 +46,7 @@ class InboxSyncManagerTest {
 
     @Test fun `arrival during scan is recovered by the following scan`() = runBlocking<Unit> {
         setupProvider()
-        `when`(repository.saveIncoming(anyString(), anyString(), anyLong())).thenAnswer {
+        `when`(repository.saveProviderMessage(anyString(), anyString(), anyLong(), eq(0L), eq(true))).thenAnswer {
             if (it.getArgument<Long>(2) == 50L) { messages += 150L; clock = 200L }
             it.getArgument<Long>(2)
         }
@@ -54,19 +55,19 @@ class InboxSyncManagerTest {
         verify(store).setLastSyncTime(100L)
         assertEquals(1, manager.syncSince(100L))
         assertEquals(listOf(1L to 100L, 100L to 200L), queryBounds)
-        verify(repository).saveIncoming("synthetic-sender", "synthetic-message", 150L)
+        verify(repository).saveProviderMessage("synthetic-sender", "synthetic-message", 150L, 0L, true)
     }
 
     @Test fun `manual short rescan does not skip older automatic backlog`() = runBlocking<Unit> {
         setupProvider()
-        `when`(repository.saveIncoming(anyString(), anyString(), anyLong())).thenReturn(1L)
+        `when`(repository.saveProviderMessage(anyString(), anyString(), anyLong(), eq(0L), eq(true))).thenReturn(1L)
         InboxSyncManager(context, repository, store) { clock }.syncRecentMinutes(10)
         verify(store, never()).setLastSyncTime(anyLong())
     }
 
     @Test fun `failed persistence leaves checkpoint for retry`() = runBlocking<Unit> {
         setupProvider()
-        `when`(repository.saveIncoming(anyString(), anyString(), anyLong())).thenThrow(IllegalStateException("synthetic disk failure"))
+        `when`(repository.saveProviderMessage(anyString(), anyString(), anyLong(), eq(0L), eq(true))).thenThrow(IllegalStateException("synthetic disk failure"))
         val manager = InboxSyncManager(context, repository, store) { clock }
         try { manager.syncSince(1L); fail("expected failure") } catch (_: IllegalStateException) { }
         verify(store, never()).setLastSyncTime(anyLong())

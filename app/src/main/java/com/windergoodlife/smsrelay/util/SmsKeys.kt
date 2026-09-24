@@ -8,13 +8,17 @@ object SmsKeys {
 
     /**
      * Deterministic unique key for dedupe between BroadcastReceiver and Inbox sync.
-     * Uses second-bucket receivedAt so slight timestamp skew still collapses duplicates.
+     * Legacy format retained unchanged for existing rows and server acknowledgements.
      */
     fun uniqueKey(sender: String, message: String, receivedAtMs: Long): String {
         val bucket = receivedAtMs / 1000L
         val raw = normalizeSender(sender) + "\n" + message + "\n" + bucket
         return sha256(raw)
     }
+
+    /** Namespaces known service-centre timestamps away from legacy provider receive-time keys. */
+    fun canonicalKey(sender: String, message: String, sentAtMs: Long): String =
+        "sms-v2:" + uniqueKey(sender, message, sentAtMs)
 
     private fun sha256(value: String): String {
         val digest = MessageDigest.getInstance("SHA-256")

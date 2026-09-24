@@ -7,6 +7,10 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.database.ContentObserver
+import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
@@ -20,6 +24,8 @@ import com.windergoodlife.smsrelay.R
 import com.windergoodlife.smsrelay.SmsRelayApp
 import com.windergoodlife.smsrelay.ui.MainActivity
 import com.windergoodlife.smsrelay.worker.PendingSmsWorker
+import com.windergoodlife.smsrelay.sync.SmsInboxChangeMonitor
+import com.windergoodlife.smsrelay.diagnostics.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -47,6 +53,15 @@ class RelayForegroundService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val clock = SimpleDateFormat("HH:mm", Locale.KOREA)
     private var observingNetwork = false
+    private var observingInbox = false
+    private val inboxChanges by lazy {
+        SmsInboxChangeMonitor(CoroutineScope(scope.coroutineContext + Dispatchers.IO),
+            { SmsRelayApp.get().inboxSync.recoverBatch(limit = 50, enqueueCaptured = true) },
+            SmsRelayApp.get().connectionLogs)
+    }
+    private val inboxObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) { inboxChanges.changed() }
+    }
     private var online = false
     private val connectivity by lazy { getSystemService(ConnectivityManager::class.java) }
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
@@ -71,12 +86,27 @@ class RelayForegroundService : Service() {
         } catch (_: Exception) {
             Log.w(TAG, "network recovery observer unavailable; periodic recovery remains scheduled")
         }
+        if (SmsRelayApp.get().hasSmsPermission()) {
+            try {
+                contentResolver.registerContentObserver(Uri.parse("content://sms"), true, inboxObserver)
+                observingInbox = true
+                // Covers a provider insert that happened just before observer registration.
+                inboxChanges.changed()
+            } catch (_: Exception) {
+                SmsRelayApp.get().connectionLogs.record(ConnectionDiagnostic(ConnectionLogStage.SMS_PROVIDER,
+                    ConnectionLogOutcome.FAILED, reason = ConnectionFailureReason.PROVIDER_UNAVAILABLE, retryable = true))
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
 
     override fun onDestroy() {
         if (observingNetwork) runCatching { connectivity.unregisterNetworkCallback(networkCallback) }
+        if (observingInbox) {
+            runCatching { contentResolver.unregisterContentObserver(inboxObserver) }
+            inboxChanges.close()
+        }
         scope.cancel()
         super.onDestroy()
     }
