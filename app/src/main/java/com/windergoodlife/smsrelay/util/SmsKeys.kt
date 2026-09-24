@@ -20,6 +20,13 @@ object SmsKeys {
     fun canonicalKey(sender: String, message: String, sentAtMs: Long): String =
         "sms-v2:" + uniqueKey(sender, message, sentAtMs)
 
+    /** Provider IDs are scoped by transport and installation on the server. No SMS key is changed. */
+    fun providerKey(source: String, id: Long, sender: String, receivedAtMs: Long): String {
+        require(source in listOf("mms", "samsung_im", "samsung_ft") && id > 0 && receivedAtMs > 0)
+        val prefix = when (source) { "samsung_im" -> "samsung-im-v1"; "samsung_ft" -> "samsung-ft-v1"; else -> "mms-v1" }
+        return "$prefix:" + sha256("$id\n${normalizeSender(sender)}\n$receivedAtMs")
+    }
+
     private fun sha256(value: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
             .digest(value.toByteArray(Charsets.UTF_8))

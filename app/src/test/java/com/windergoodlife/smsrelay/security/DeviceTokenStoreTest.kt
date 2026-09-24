@@ -7,6 +7,29 @@ import org.mockito.ArgumentMatchers.*
 import org.mockito.Mockito.*
 
 class DeviceTokenStoreTest {
+    @Test fun `source cursors and full SMS history marker survive restart without changing identity`() {
+        val values = mutableMapOf<String, Any>()
+        val prefs = preferences(values)
+        val store = DeviceTokenStore(prefs) { 100L }
+        store.save("https://example.test", "synthetic-phone", "synthetic-token")
+        store.commitInboxCheckpoint(351, 200)
+        assertFalse(store.isFullSmsHistoryComplete())
+        assertEquals(0L, store.getProviderCheckpoint("mms"))
+        store.commitProviderCheckpoint("mms", 74)
+        store.commitProviderCheckpoint("samsung_im", 27)
+        store.commitProviderCheckpoint("samsung_ft", 3)
+        store.commitProviderCheckpoint("mms", 1)
+        store.finishFullSmsHistory(250, 150)
+        val restarted = DeviceTokenStore(prefs)
+        assertTrue(restarted.isFullSmsHistoryComplete())
+        assertEquals(351L, restarted.getLastInboxSmsId())
+        assertEquals(200L, restarted.getLastSyncTime())
+        assertEquals(74L, restarted.getProviderCheckpoint("mms"))
+        assertEquals(27L, restarted.getProviderCheckpoint("samsung_im"))
+        assertEquals(3L, restarted.getProviderCheckpoint("samsung_ft"))
+        assertEquals("synthetic-phone", restarted.getDeviceId())
+        assertEquals("synthetic-token", restarted.getDeviceToken())
+    }
     private fun preferences(values: MutableMap<String, Any>): SharedPreferences {
         val prefs = mock(SharedPreferences::class.java)
         val editor = mock(SharedPreferences.Editor::class.java)

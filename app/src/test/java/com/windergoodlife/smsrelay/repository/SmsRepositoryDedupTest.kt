@@ -257,4 +257,30 @@ class SmsRepositoryDedupTest {
             assertEquals("SENT", fixture.rows.values.single().status)
         }
     }
+
+    @Test fun `MMS and Samsung source identities never collapse into legacy SMS or each other`() = runBlocking<Unit> {
+        val fixture = Fixture()
+        fixture.configureDao()
+        val original = fixture.row("SENT").copy(serverMessageId = "legacy-ack")
+        fixture.rows[1L] = original
+        val repository = fixture.repository()
+        for (source in listOf("mms", "samsung_im", "samsung_ft")) {
+            repository.saveOtherProviderMessage(source, 1L, original.sender, original.message, original.receivedAt, true)
+        }
+        assertEquals(4, fixture.rows.size)
+        assertEquals(original, fixture.rows[1L])
+        assertEquals(4, fixture.rows.values.map { it.uniqueKey }.toSet().size)
+        assertTrue(fixture.rows.values.all { it.uniqueKey.length <= 80 })
+        repository.uploadPending()
+        assertEquals(3, fixture.requests.size)
+        fixture.enqueued.clear()
+        for (source in listOf("mms", "samsung_im", "samsung_ft")) {
+            assertNull(repository.saveOtherProviderMessage(source, 1L, original.sender,
+                "synthetic changed attachment description", original.receivedAt, true))
+        }
+        assertTrue(fixture.enqueued.isEmpty())
+        assertEquals(original, fixture.rows[1L])
+        repository.uploadPending()
+        assertEquals(3, fixture.requests.size)
+    }
 }

@@ -59,7 +59,7 @@ class SmsAccessSnapshotTest {
         assertEquals(InboxAccess.AVAILABLE, snapshot.inboxAccess)
         assertEquals(12, snapshot.inboxCount)
         assertEquals(InboxCursorRelation.AHEAD, snapshot.cursorRelation)
-        assertEquals(listOf(listOf("_id", "date"), listOf("_id")), projections)
+        assertEquals(listOf(listOf("_id", "date"), listOf("_id", "date"), listOf("_id")), projections)
         assertFalse(snapshot.format().contains("98765432"))
         assertTrue(snapshot.format().contains("전송 완료 8"))
         verify(f.store, never()).getLastSyncTime()

@@ -117,6 +117,33 @@ class DeviceTokenStore internal constructor(
     fun getInboxUpgradeSnapshot(): Long? = requireSecurePreferences()
         .getLong(KEY_INBOX_UPGRADE_SNAPSHOT, -1L).takeIf { it >= 0L }
 
+    /** Separate cursors: identical row IDs in different providers must never suppress messages. */
+    fun getProviderCheckpoint(source: String): Long {
+        require(source in listOf("mms", "samsung_im", "samsung_ft", "sms_history"))
+        return requireSecurePreferences().getLong("provider_checkpoint_$source", 0L)
+    }
+
+    @Synchronized
+    fun commitProviderCheckpoint(source: String, id: Long) {
+        require(id >= 0)
+        val previous = getProviderCheckpoint(source)
+        check(requireSecurePreferences().edit().putLong("provider_checkpoint_$source", maxOf(previous, id)).commit()) {
+            "문자 수집 기록을 저장하지 못했습니다"
+        }
+    }
+
+    fun isFullSmsHistoryComplete(): Boolean = requireSecurePreferences().getBoolean("full_sms_history_complete_v1", false)
+
+    @Synchronized
+    fun finishFullSmsHistory(id: Long, epochMs: Long) {
+        require(id >= 0)
+        val secure = requireSecurePreferences()
+        check(secure.edit().putBoolean("full_sms_history_complete_v1", true)
+            .putLong(KEY_LAST_INBOX_ID, maxOf(secure.getLong(KEY_LAST_INBOX_ID, -1L), id))
+            .putLong(KEY_LAST_SYNC, maxOf(secure.getLong(KEY_LAST_SYNC, 0L), epochMs))
+            .remove(KEY_INBOX_UPGRADE_SNAPSHOT).commit()) { "전체 문자 확인 기록을 저장하지 못했습니다" }
+    }
+
     @Synchronized
     fun beginInboxUpgrade(snapshotId: Long) {
         check(requireSecurePreferences().edit().putLong(KEY_INBOX_UPGRADE_SNAPSHOT, snapshotId).commit()) {

@@ -10,7 +10,7 @@ import com.windergoodlife.smsrelay.network.ApiClient
 import com.windergoodlife.smsrelay.repository.SmsRepository
 import com.windergoodlife.smsrelay.security.DeviceTokenStore
 import com.windergoodlife.smsrelay.service.RelayForegroundService
-import com.windergoodlife.smsrelay.sync.InboxSyncManager
+import com.windergoodlife.smsrelay.sync.MessageInboxSyncManager
 import com.windergoodlife.smsrelay.sync.SyncStateStore
 import com.windergoodlife.smsrelay.worker.HeartbeatWorker
 import com.windergoodlife.smsrelay.worker.PendingSmsWorker
@@ -26,7 +26,7 @@ class SmsRelayApp : Application() {
         private set
     lateinit var repository: SmsRepository
         private set
-    lateinit var inboxSync: InboxSyncManager
+    lateinit var inboxSync: MessageInboxSyncManager
         private set
 
     override fun onCreate() {
@@ -37,7 +37,7 @@ class SmsRelayApp : Application() {
         ApiClient.diagnostics = connectionLogs
         val api = ApiClient.create(tokenStore)
         repository = SmsRepository(this, database.smsDao(), api, tokenStore, connectionLogs)
-        inboxSync = InboxSyncManager(this, repository)
+        inboxSync = MessageInboxSyncManager.create(this, repository, tokenStore, connectionLogs)
 
         startRelayIfReady()
     }

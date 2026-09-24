@@ -8,6 +8,16 @@ import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 
 class RelayRecoveryRunnerTest {
+    @Test fun `healthy source pages continue then incomplete source gets durable backoff without false success`() = runBlocking<Unit> {
+        for (more in listOf(true, false)) {
+            val events = mutableListOf<ConnectionDiagnostic>()
+            val runner = RelayRecoveryRunner({ InboxSyncManager.RecoveryBatch(3, 3, more,
+                InboxRecoveryException(ConnectionFailureReason.PROVIDER_UNAVAILABLE, true)) },
+                { SmsRepository.DrainResult(3, 0, false, false) }, {}, ConnectionLogSink(events::add))
+            assertEquals(if (more) RelayRecoveryRunner.Decision.CONTINUE else RelayRecoveryRunner.Decision.RETRY, runner.run())
+            assertTrue(events.any { it.stage == ConnectionLogStage.INBOX && it.outcome == ConnectionLogOutcome.FAILED })
+        }
+    }
     @Test fun `one invalid payload cannot strand remaining healthy messages or provider pages`() = runBlocking<Unit> {
         for ((remaining, more) in listOf(1 to false, 0 to true)) {
             val phases = mutableListOf<SyncPhase>()

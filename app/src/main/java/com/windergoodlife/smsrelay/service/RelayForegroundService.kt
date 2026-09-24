@@ -57,7 +57,8 @@ class RelayForegroundService : Service() {
     private val inboxChanges by lazy {
         SmsInboxChangeMonitor(CoroutineScope(scope.coroutineContext + Dispatchers.IO),
             { SmsRelayApp.get().inboxSync.recoverBatch(limit = 50, enqueueCaptured = true) },
-            SmsRelayApp.get().connectionLogs)
+            SmsRelayApp.get().connectionLogs,
+            retryLater = { PendingSmsWorker.enqueue(this@RelayForegroundService) })
     }
     private val inboxObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
         override fun onChange(selfChange: Boolean) { inboxChanges.changed() }
@@ -87,15 +88,19 @@ class RelayForegroundService : Service() {
             Log.w(TAG, "network recovery observer unavailable; periodic recovery remains scheduled")
         }
         if (SmsRelayApp.get().hasSmsPermission()) {
-            try {
-                contentResolver.registerContentObserver(Uri.parse("content://sms"), true, inboxObserver)
-                observingInbox = true
-                // Covers a provider insert that happened just before observer registration.
-                inboxChanges.changed()
-            } catch (_: Exception) {
-                SmsRelayApp.get().connectionLogs.record(ConnectionDiagnostic(ConnectionLogStage.SMS_PROVIDER,
-                    ConnectionLogOutcome.FAILED, reason = ConnectionFailureReason.PROVIDER_UNAVAILABLE, retryable = true))
+            val authorities = mutableListOf("sms", "mms", "mms-sms")
+            if (SmsRelayApp.get().inboxSync.observesSamsungChat) authorities += "im"
+            for (authority in authorities) {
+                try {
+                    contentResolver.registerContentObserver(Uri.parse("content://$authority"), true, inboxObserver)
+                    observingInbox = true
+                } catch (_: Exception) {
+                    SmsRelayApp.get().connectionLogs.record(ConnectionDiagnostic(ConnectionLogStage.SMS_PROVIDER,
+                        ConnectionLogOutcome.FAILED, reason = ConnectionFailureReason.PROVIDER_UNAVAILABLE, retryable = true))
+                }
             }
+            // Covers inserts before registration. Samsung IM also notifies mms-sms/conversations.
+            inboxChanges.changed()
         }
     }
 

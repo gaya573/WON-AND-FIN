@@ -29,12 +29,22 @@ class InboxIncrementalSyncTest {
         var beforeSave: (Long) -> Unit = {}
         var nullSnapshot = false
         var nullMessages = false
+        var historyCursor = 0L
+        var historyComplete = false
 
         suspend fun setup() {
             `when`(context.contentResolver).thenReturn(resolver)
             `when`(store.getLastSyncTime()).thenAnswer { timeCursor }
             `when`(store.getLastInboxSmsId()).thenAnswer { providerCursor }
             `when`(store.getInboxUpgradeSnapshot()).thenAnswer { upgradeSnapshot }
+            `when`(store.getProviderCheckpoint("sms_history")).thenAnswer { historyCursor }
+            `when`(store.isFullSmsHistoryComplete()).thenAnswer { historyComplete }
+            doAnswer { historyCursor = it.getArgument<Long>(1); null }.`when`(store).commitProviderCheckpoint(anyString(), anyLong())
+            doAnswer {
+                historyComplete = true
+                providerCursor = maxOf(providerCursor ?: 0L, it.getArgument<Long>(0))
+                timeCursor = maxOf(timeCursor, it.getArgument<Long>(1)); null
+            }.`when`(store).finishFullSmsHistory(anyLong(), anyLong())
             doAnswer { upgradeSnapshot = it.getArgument<Long>(0); null }.`when`(store).beginInboxUpgrade(anyLong())
             doAnswer { upgradeSnapshot = null; null }.`when`(store).finishInboxUpgrade()
             doAnswer { providerCursor = it.getArgument<Long>(0); timeCursor = it.getArgument<Long>(1); null }
@@ -78,7 +88,7 @@ class InboxIncrementalSyncTest {
             return cursor
         }
 
-        fun manager() = InboxSyncManager(context, repository, store) { now }
+        fun manager(fullHistory: Boolean = false) = InboxSyncManager(context, repository, store, fullHistory) { now }
     }
 
     @Test fun `upgrade honors existing time boundary and subsequent reconnect skips completed provider rows`() = runBlocking<Unit> {
@@ -214,5 +224,39 @@ class InboxIncrementalSyncTest {
         assertEquals(3L, fixture.providerCursor)
         assertNull(fixture.upgradeSnapshot)
         assertFalse(fixture.manager().recoverBatch().hasMore)
+    }
+
+    @Test fun `authorized full history scans before old time boundary once and preserves existing saved messages`() = runBlocking<Unit> {
+        val fixture = Fixture()
+        fixture.setup()
+        fixture.providerCursor = 2
+        fixture.saved += 2L // Existing acknowledged legacy row; recovery must reuse it.
+        val first = fixture.manager(true).recoverBatch(limit = 1)
+        assertEquals(1, first.inserted)
+        assertTrue(first.hasMore)
+        assertEquals(1L, fixture.historyCursor)
+        assertEquals(2L, fixture.providerCursor)
+        assertFalse(fixture.historyComplete)
+        val second = fixture.manager(true).recoverBatch(limit = 1)
+        assertEquals(0, second.inserted)
+        assertTrue(fixture.historyComplete)
+        assertEquals(setOf(1L, 2L), fixture.saved)
+        val queriesBefore = fixture.queries.size
+        assertEquals(0, fixture.manager(true).recoverBatch().inserted)
+        assertEquals(queriesBefore, fixture.queries.size)
+        fixture.inbox += Message(3, 20) // New insertion with older reported receive time.
+        assertEquals(1, fixture.manager(true).recoverBatch().inserted)
+        assertEquals("_id > ? AND _id <= ?" to listOf(2L, 3L), fixture.queries.last())
+    }
+
+    @Test fun `full history storage failure does not mark history complete or alter previous incremental cursor`() = runBlocking<Unit> {
+        val fixture = Fixture()
+        fixture.setup()
+        fixture.providerCursor = 2
+        fixture.beforeSave = { throw IllegalStateException("synthetic disk failure") }
+        assertThrows(IllegalStateException::class.java) { runBlocking { fixture.manager(true).recoverBatch() } }
+        assertEquals(0L, fixture.historyCursor)
+        assertFalse(fixture.historyComplete)
+        assertEquals(2L, fixture.providerCursor)
     }
 }

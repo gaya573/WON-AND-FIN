@@ -21,7 +21,8 @@ enum class ConnectionLogStage(val label: String) {
     INBOX("누락 문자 확인"), UPLOAD("문자 전송"), SYNC("문자 동기화"),
     SMS_RECEIVE("SMS_RECEIVED 새 문자 수신"), LOCAL_STORE("휴대폰 저장"), UPLOAD_QUEUE("전송 예약"), SMS_PROVIDER("문자함 변경 확인"),
     SMS_CALLBACK("SmsReceiver.onReceive 진입"), SMS_PDU("SMS_RECEIVED PDU 배열"),
-    SMS_DECODE("SMS_RECEIVED PDU 해석"), SMS_GROUPS("SMS_RECEIVED 발신자 그룹"), SMS_ASYNC("SMS_RECEIVED 비동기 처리")
+    SMS_DECODE("SMS_RECEIVED PDU 해석"), SMS_GROUPS("SMS_RECEIVED 발신자 그룹"), SMS_ASYNC("SMS_RECEIVED 비동기 처리"),
+    MMS_PROVIDER("MMS 누락 확인"), CHAT_PROVIDER("삼성 채팅 누락 확인"), CHAT_FILE_PROVIDER("삼성 채팅 첨부 확인")
 }
 
 enum class ConnectionLogOutcome(val label: String) {

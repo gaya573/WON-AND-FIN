@@ -12,7 +12,8 @@ class SmsInboxChangeMonitor(
     scope: CoroutineScope,
     private val capture: suspend () -> InboxSyncManager.RecoveryBatch,
     private val logs: ConnectionLogSink,
-    private val coalesce: suspend () -> Unit = { delay(300L) }
+    private val coalesce: suspend () -> Unit = { delay(300L) },
+    private val retryLater: () -> Unit = {}
 ) {
     private val changes = Channel<Unit>(Channel.CONFLATED)
     private val job = scope.launch {
@@ -24,8 +25,10 @@ class SmsInboxChangeMonitor(
                 do {
                     logs.record(ConnectionDiagnostic(ConnectionLogStage.SMS_PROVIDER, ConnectionLogOutcome.STARTED))
                     val page = capture()
-                    logs.record(ConnectionDiagnostic(ConnectionLogStage.SMS_PROVIDER, ConnectionLogOutcome.SUCCEEDED,
-                        count = page.inserted))
+                    logs.record(ConnectionDiagnostic(ConnectionLogStage.SMS_PROVIDER,
+                        if (page.failure == null) ConnectionLogOutcome.SUCCEEDED else ConnectionLogOutcome.FAILED,
+                        count = page.inserted, reason = page.failure?.reason, retryable = page.failure?.retryable))
+                    if (page.failure != null) retryLater()
                     if (page.hasMore) coalesce()
                 } while (page.hasMore)
             } catch (cancelled: CancellationException) {
@@ -35,6 +38,7 @@ class SmsInboxChangeMonitor(
                 logs.record(ConnectionDiagnostic(ConnectionLogStage.SMS_PROVIDER, ConnectionLogOutcome.FAILED,
                     reason = classified?.reason ?: ConnectionFailureReason.LOCAL_STORAGE,
                     retryable = classified?.retryable ?: true))
+                retryLater()
                 // Normal periodic recovery remains the durable retry fallback; no tight failure loop.
             }
         }

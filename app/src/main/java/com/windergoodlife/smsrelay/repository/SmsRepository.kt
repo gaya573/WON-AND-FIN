@@ -60,10 +60,14 @@ class SmsRepository(
         save(sender, message, receivedAtMs, enqueue, sentAtMs.takeIf { it > 0L } ?: receivedAtMs,
             legacyTimestamp = receivedAtMs, knownSentTime = sentAtMs > 0L)
 
+    suspend fun saveOtherProviderMessage(source: String, sourceId: Long, sender: String, message: String,
+        receivedAtMs: Long, enqueue: Boolean): Long? = save(sender, message, receivedAtMs, enqueue,
+        externalKey = SmsKeys.providerKey(source, sourceId, sender, receivedAtMs))
+
     private suspend fun save(sender: String, message: String, receivedAtMs: Long, enqueue: Boolean,
         identityTimestamp: Long = receivedAtMs, legacyTimestamp: Long = receivedAtMs,
-        knownSentTime: Boolean = true): Long? {
-        val canonicalKey = if (knownSentTime) SmsKeys.canonicalKey(sender, message, identityTimestamp)
+        knownSentTime: Boolean = true, externalKey: String? = null): Long? {
+        val canonicalKey = externalKey ?: if (knownSentTime) SmsKeys.canonicalKey(sender, message, identityTimestamp)
             else SmsKeys.uniqueKey(sender, message, receivedAtMs)
         val entity = SmsEntity(
             uniqueKey = canonicalKey,
@@ -79,12 +83,14 @@ class SmsRepository(
             // or SENT acknowledgements. New rows use the same timestamp as SMS_RECEIVED.
             val legacyKey = SmsKeys.uniqueKey(sender, message, legacyTimestamp)
             val priorBroadcastKey = SmsKeys.uniqueKey(sender, message, identityTimestamp)
-            val legacy = dao.findByUniqueKey(legacyKey)
-                ?: (if (priorBroadcastKey != legacyKey && priorBroadcastKey != canonicalKey)
-                    dao.findByUniqueKey(priorBroadcastKey) else null)
+            val legacy = if (externalKey != null) null else {
+                dao.findByUniqueKey(legacyKey)
+                    ?: (if (priorBroadcastKey != legacyKey && priorBroadcastKey != canonicalKey)
+                        dao.findByUniqueKey(priorBroadcastKey) else null)
+            }
             // A provider without DATE_SENT can still match an already received broadcast when
             // its exact timestamp bucket agrees. Never widen this to a body/time-window match.
-            val exactBroadcast = if (!knownSentTime)
+            val exactBroadcast = if (externalKey == null && !knownSentTime)
                 dao.findByUniqueKey(SmsKeys.canonicalKey(sender, message, receivedAtMs)) else null
             val key = legacy?.uniqueKey ?: exactBroadcast?.uniqueKey ?: canonicalKey
             val rowId = dao.insertIgnore(entity.copy(uniqueKey = key))

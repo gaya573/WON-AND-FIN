@@ -6,6 +6,22 @@ import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 
 class SmsInboxChangeMonitorTest {
+    @Test fun `incomplete source requests durable retry once without observer spinning`() = runBlocking<Unit> {
+        var captures = 0
+        var retries = 0
+        val events = mutableListOf<ConnectionDiagnostic>()
+        val monitor = SmsInboxChangeMonitor(this, {
+            captures++
+            InboxSyncManager.RecoveryBatch(1, 1, false,
+                InboxRecoveryException(ConnectionFailureReason.PROVIDER_UNAVAILABLE, true))
+        }, ConnectionLogSink(events::add), coalesce = { yield() }, retryLater = { retries++ })
+        monitor.changed()
+        repeat(6) { yield() }
+        assertEquals(1, captures)
+        assertEquals(1, retries)
+        assertEquals(ConnectionLogOutcome.FAILED, events.last().outcome)
+        monitor.close()
+    }
     @Test fun `bursts coalesce without polling and an event during capture gets a followup`() = runBlocking<Unit> {
         var captures = 0
         val firstCapture = CompletableDeferred<Unit>()

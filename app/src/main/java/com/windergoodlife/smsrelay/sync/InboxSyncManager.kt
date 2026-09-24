@@ -25,6 +25,7 @@ class InboxSyncManager(
     private val context: Context,
     private val repository: SmsRepository,
     private val tokenStore: DeviceTokenStore = com.windergoodlife.smsrelay.SmsRelayApp.get().tokenStore,
+    private val includeFullHistory: Boolean = false,
     private val now: () -> Long = System::currentTimeMillis
 ) {
     private val recoveryMutex = Mutex()
@@ -80,7 +81,8 @@ class InboxSyncManager(
 
     suspend fun syncFromLastCheckpoint(): Int = recoverBatch().inserted
 
-    data class RecoveryBatch(val inserted: Int, val scanned: Int, val hasMore: Boolean)
+    data class RecoveryBatch(val inserted: Int, val scanned: Int, val hasMore: Boolean,
+        val failure: InboxRecoveryException? = null)
 
     /** Commit only a successfully persisted bounded page, keeping the first-consent time boundary. */
     suspend fun recoverBatch(limit: Int = 250, deadlineNanos: Long = System.nanoTime() + 30_000_000_000L,
@@ -105,21 +107,28 @@ class InboxSyncManager(
             throw InboxRecoveryException(ConnectionFailureReason.PROVIDER_UNAVAILABLE, true)
         } ?: throw InboxRecoveryException(ConnectionFailureReason.PROVIDER_UNAVAILABLE, true)
 
-        val previousId = tokenStore.getLastInboxSmsId()
-        val upgradeSnapshot = tokenStore.getInboxUpgradeSnapshot()
+        // Explicitly authorized all-history import runs once with its own cursor. Existing Room
+        // keys and SENT states still decide whether a message has already been relayed.
+        val fullHistory = includeFullHistory && !tokenStore.isFullSmsHistoryComplete()
+        val previousId = if (fullHistory) tokenStore.getProviderCheckpoint("sms_history") else tokenStore.getLastInboxSmsId()
+        val upgradeSnapshot = if (fullHistory) null else tokenStore.getInboxUpgradeSnapshot()
         val snapshotId = upgradeSnapshot ?: providerMaxId
         // A reset provider must not silently rewind our cursor and replay its entire history.
         if (previousId != null && providerMaxId < previousId) {
             throw InboxRecoveryException(ConnectionFailureReason.PROVIDER_RESET, false)
         }
         if (previousId == snapshotId) {
+            if (fullHistory) tokenStore.finishFullSmsHistory(snapshotId, snapshotEnd)
             if (upgradeSnapshot != null) tokenStore.finishInboxUpgrade()
             return@withLock RecoveryBatch(0, 0, providerMaxId > snapshotId)
         }
 
         val selection: String
         val args: Array<String>
-        if (previousId == null) {
+        if (fullHistory) {
+            selection = "_id > ? AND _id <= ?"
+            args = arrayOf(checkNotNull(previousId).toString(), snapshotId.toString())
+        } else if (previousId == null) {
             if (upgradeSnapshot == null) tokenStore.beginInboxUpgrade(snapshotId)
             // Upgrade from the existing time cursor; do not extend collection before consent.
             // Include the boundary, with Room's unique key preserving already saved messages.
@@ -173,9 +182,14 @@ class InboxSyncManager(
                 lastSavedId = rowId
             }
             // While upgrading the time cursor, retain its consent boundary across partial pages.
-            tokenStore.commitInboxCheckpoint(if (hasMore) checkNotNull(lastSavedId) else minOf(snapshotId, providerMaxId),
-                if (hasMore) tokenStore.getLastSyncTime() else snapshotEnd)
-            if (!hasMore && (previousId == null || upgradeSnapshot != null)) tokenStore.finishInboxUpgrade()
+            val committedId = if (hasMore) checkNotNull(lastSavedId) else minOf(snapshotId, providerMaxId)
+            if (fullHistory) {
+                tokenStore.commitProviderCheckpoint("sms_history", committedId)
+                if (!hasMore) tokenStore.finishFullSmsHistory(committedId, snapshotEnd)
+            } else {
+                tokenStore.commitInboxCheckpoint(committedId, if (hasMore) tokenStore.getLastSyncTime() else snapshotEnd)
+                if (!hasMore && (previousId == null || upgradeSnapshot != null)) tokenStore.finishInboxUpgrade()
+            }
         }
         Log.i(TAG, "inbox recovery inserted=$inserted")
         RecoveryBatch(inserted, scanned, hasMore || providerMaxId > snapshotId)

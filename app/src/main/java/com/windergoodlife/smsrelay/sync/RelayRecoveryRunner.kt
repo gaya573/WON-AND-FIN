@@ -22,7 +22,10 @@ class RelayRecoveryRunner(
         logs.record(ConnectionDiagnostic(ConnectionLogStage.INBOX, ConnectionLogOutcome.STARTED))
         try {
             recovery = recover(deadline)
-            logs.record(ConnectionDiagnostic(ConnectionLogStage.INBOX, ConnectionLogOutcome.SUCCEEDED, count = recovery.inserted))
+            recoveryFailure = recovery.failure
+            logs.record(ConnectionDiagnostic(ConnectionLogStage.INBOX,
+                if (recoveryFailure == null) ConnectionLogOutcome.SUCCEEDED else ConnectionLogOutcome.FAILED,
+                count = recovery.inserted, reason = recoveryFailure?.reason, retryable = recoveryFailure?.retryable))
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
@@ -54,6 +57,8 @@ class RelayRecoveryRunner(
         }
         state(phase)
         return when {
+            // Finish pages from healthy independent providers before backing off an unfinished MMS.
+            recovery?.hasMore == true && !result.blocked && !result.retryableFailure -> Decision.CONTINUE
             recoveryFailure?.retryable == true || result.retryableFailure -> Decision.RETRY
             result.blocked -> Decision.COMPLETE
             // Continue the Room backlog even if a provider reset requires operator attention.
